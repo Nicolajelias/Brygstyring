@@ -12,6 +12,8 @@ public:
   static void readTemperatures();
   static float getGrydeTemp();
   static float getVentilTemp();
+  static bool isGrydeValid();     // ← tilføj denne
+  static bool isVentilValid();    // ← og denne
 
   // Nye funktioner:
   static bool compareAddress(const DeviceAddress a, const DeviceAddress b);

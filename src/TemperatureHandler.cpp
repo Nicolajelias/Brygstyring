@@ -11,6 +11,8 @@ DallasTemperature sensors(&oneWire);
 
 float grydeTemp = 0.0;
 float ventilTemp = 0.0;
+bool grydeTempValid = false;
+bool ventilTempValid = false;
 
 // Globale DeviceAddress-variabler til sensorernes adresser
 DeviceAddress grydeAddress;
@@ -40,6 +42,9 @@ void TemperatureHandler::begin(uint8_t pin) {
 }
 
 void TemperatureHandler::readTemperatures() {
+  grydeTempValid = false;
+  ventilTempValid = false;
+
   sensors.requestTemperatures();
   delay(100); // Vent på måling
   int deviceCount = sensors.getDeviceCount();
@@ -47,25 +52,35 @@ void TemperatureHandler::readTemperatures() {
     DeviceAddress addr;
     if (sensors.getAddress(addr, i)) {
       float temp = sensors.getTempC(addr);
-      if (temp == -127.0f) {
-        Serial.println("Fejl: Temperatur ikke tilgængelig");
+      if (temp == -127.0f || temp < -50 || temp > 150) {
+        Serial.println("Fejl: Temperatur ugyldig fra sensor");
         continue;
       }
       if (compareAddress(addr, grydeAddress)) {
         grydeTemp = temp;
+        grydeTempValid = true;
       } else if (compareAddress(addr, ventilAddress)) {
         ventilTemp = temp;
+        ventilTempValid = true;
       }
     }
   }
 }
 
 float TemperatureHandler::getGrydeTemp() {
-  return grydeTemp;
+  return grydeTempValid ? grydeTemp : NAN;
 }
 
 float TemperatureHandler::getVentilTemp() {
-  return ventilTemp;
+  return ventilTempValid ? ventilTemp : NAN;
+}
+
+bool TemperatureHandler::isGrydeValid() {
+  return grydeTempValid;
+}
+
+bool TemperatureHandler::isVentilValid() {
+  return ventilTempValid;
 }
 
 bool TemperatureHandler::compareAddress(const DeviceAddress a, const DeviceAddress b) {

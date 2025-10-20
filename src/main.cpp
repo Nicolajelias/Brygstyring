@@ -9,7 +9,6 @@
 #include <ESP8266mDNS.h>
 #include "Version.h"
 
-
 // =====================================================================================
 // PIN-KONFIGURATION (tilpas efter behov)
 // =====================================================================================
@@ -27,100 +26,97 @@ const unsigned long longPressThreshold = 3000; // 3000 ms = 3 sekunder
 unsigned long buttonPressStart = 0;
 bool longPressHandled = false;
 
+unsigned long lastTemperatureRead = 0;
+const unsigned long temperatureInterval = 1000; // 1 sekund
+
 void setup() {
   Serial.begin(115200);
   Serial.println();
   Serial.println("==== Opstart af Brygkontroller (HTTP-OTA) ====");
 
-  // Init EEPROM (for at hente gemt konfiguration, eller lave defaults)
   EEPROMHandler::begin(); 
-    
-  // Opsæt pins
   pinMode(PIN_GAS, OUTPUT);
   pinMode(PIN_PUMP, OUTPUT);
   pinMode(PIN_BUZZER, OUTPUT);
   pinMode(PIN_BUTTON, INPUT);
 
-  // Initialiser WiFi
   WiFiHandler::begin();
-
-  // Initialiser WebServer
   WebServerHandler::begin();
-
-  // Initialiser TemperatureHandler
   TemperatureHandler::begin(PIN_SENSOR);
-
-  // Initialiser ProcessHandler (fjern hvis ikke nødvendig)
   ProcessHandler::begin(PIN_GAS, PIN_PUMP, PIN_BUZZER, PIN_BUTTON);
-
-  // Initialiser DisplayHandler
   DisplayHandler::begin();
 
-  // Vis splash screen
   DisplayHandler::displayBeerAnimation();
   delay(5000);
-  
-  // Vis besked på displayet afhængigt af WiFi-tilstanden
+
   if (WiFiHandler::isAPMode()) {
     DisplayHandler::showMessage("AP-mode - 192.168.4.1");
   } else {
     String ipAddress = WiFi.localIP().toString();
     DisplayHandler::showMessage("brygkontrol.local\n" + ipAddress);
   }
-  
-  // Vent i 5 sekunder
   delay(5000);
-
   Serial.println("==== Opstart gennemført ====");
 }
 
 void loop() {
-  // Håndtér webserver
   WebServerHandler::handleClient();
-
-  // Tjek WiFi
   WiFiHandler::handleWiFi();
-
   MDNS.update();
 
-  // Læs temperaturer
-  TemperatureHandler::readTemperatures();
-  float tGryde  = TemperatureHandler::getGrydeTemp();
-  float tVentil = TemperatureHandler::getVentilTemp();
+  // Opdater temperatur hvert sekund
+  unsigned long now = millis();
+  static float tGryde = NAN;
+  static float tVentil = NAN;
+  static bool isGrydeValid = false;
+  static bool isVentilValid = false;
 
-  // Opdater processtyring (fx bang-bang regulering, tidsstyring)
+  if (now - lastTemperatureRead >= temperatureInterval) {
+    lastTemperatureRead = now;
+    TemperatureHandler::readTemperatures();
+
+    isGrydeValid = TemperatureHandler::isGrydeValid();
+    isVentilValid = TemperatureHandler::isVentilValid();
+
+    if (isGrydeValid) {
+      tGryde = TemperatureHandler::getGrydeTemp();
+    }
+    if (isVentilValid) {
+      tVentil = TemperatureHandler::getVentilTemp();
+    }
+  }
+
+  // Opdater processtyring og display med seneste gyldige temperaturer
   ProcessHandler::update(tGryde, tVentil);
-  // Opdater display
-  DisplayHandler::update(tGryde, tVentil, blinkState, ProcessHandler::getProcessStep(), ProcessHandler::getRemainingTime());
+  DisplayHandler::update(
+    isGrydeValid ? tGryde : NAN,
+    isVentilValid ? tVentil : NAN,
+    blinkState,
+    ProcessHandler::getProcessStep(),
+    ProcessHandler::getRemainingTime()
+  );
 
-  // Long press detektion for knappen:
   if (digitalRead(PIN_BUTTON) == LOW) {
-    // Knappen er trykket
     if (buttonPressStart == 0) {
-      buttonPressStart = millis();  // Start tid
+      buttonPressStart = millis();
       longPressHandled = false;
     } else if (!longPressHandled && (millis() - buttonPressStart >= longPressThreshold)) {
-      // Long press opdaget – start mæsning
       ProcessHandler::startMashing();
-      longPressHandled = true;  // Undgå gentagen opstart
+      longPressHandled = true;
       Serial.println("Long press: Start mæsning");
     }
   } else {
-    // Knappen er ikke trykket, nulstil starttid
     buttonPressStart = 0;
     longPressHandled = false;
   }
 
-  // Blink-logik for TVentil, når pumpe er slukket
   bool pumpOn = ProcessHandler::isPumpOn();
-  unsigned long now = millis();
   if (!pumpOn) {
     if (now - lastBlinkToggle >= 500) {
       lastBlinkToggle = now;
       blinkState = !blinkState;
     }
   } else {
-    blinkState = true; // Konstant visning, hvis pumpen er tændt
+    blinkState = true;
   }
-
-  }
+}
