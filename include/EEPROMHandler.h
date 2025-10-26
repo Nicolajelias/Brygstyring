@@ -16,8 +16,6 @@ struct Config {
     unsigned long boilTime;      // i sekunder
     float mashSetpoint;
     float mashoutSetpoint;
-    char grydeAddress[17];       // 16 tegn + nullterminator (f.eks. "28FFA1B2C3D4E5F6")
-    char ventilAddress[17];      // samme format som grydeAddress
 };
 
 class EEPROMHandler {

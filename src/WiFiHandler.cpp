@@ -1,8 +1,8 @@
 #include "WiFiHandler.h"
-#include <ESP8266WiFi.h>
+#include <WiFi.h>
 #include <Arduino.h>
 #include "EEPROMHandler.h" // Inkluderer definitionen af Config og EEPROMHandler
-#include <ESP8266mDNS.h> // Inkluderer mDNS
+#include <ESPmDNS.h> // Inkluderer mDNS
 //#include "DisplayHandler.h"
 
 // =====================================================================
@@ -34,7 +34,7 @@ void WiFiHandler::begin() {
   const Config & cfg = EEPROMHandler::getConfig();
   
   // For at minimere forsinkelse og gøre AP mere responsivt:
-  WiFi.setSleepMode(WIFI_NONE_SLEEP);
+  WiFi.setSleep(false);
 
   // Hvis SSID/password i EEPROM er tomt, start AP med det samme
   if (cfg.ssid[0] == '\0' || cfg.password[0] == '\0') {
@@ -44,7 +44,7 @@ void WiFiHandler::begin() {
   }
 
   // Forsøg at forbinde til WiFi (STA)
-  WiFi.mode(WIFI_STA);
+  WiFi.mode(WIFI_MODE_STA);
   WiFi.setHostname("brygkontrol");
   WiFi.begin(cfg.ssid, cfg.password);
 
@@ -96,7 +96,7 @@ void WiFiHandler::begin() {
 // WiFiHandler::startAP()
 // =====================================================================
 void WiFiHandler::startAP() {
-  WiFi.mode(WIFI_AP);
+  WiFi.mode(WIFI_MODE_AP);
 
   // Tving IP-konfiguration på AP
   bool success = WiFi.softAPConfig(apIP, apGW, apSN);
@@ -130,7 +130,8 @@ void WiFiHandler::startAP() {
 // =====================================================================
 void WiFiHandler::handleWiFi() {
   // Tjek kun, hvis enheden er i STA-mode (eller STA+AP)
-  if (WiFi.getMode() & WIFI_STA) {
+  wifi_mode_t mode = WiFi.getMode();
+  if (mode == WIFI_MODE_STA || mode == WIFI_MODE_APSTA) {
     unsigned long now = millis();
     if (now - lastWiFiCheck >= WIFI_CHECK_INTERVAL) {
       lastWiFiCheck = now;
@@ -144,5 +145,5 @@ void WiFiHandler::handleWiFi() {
 }
 
 bool WiFiHandler::isAPMode() {
-    return WiFi.getMode() == WIFI_AP;
+    return WiFi.getMode() == WIFI_MODE_AP;
 }

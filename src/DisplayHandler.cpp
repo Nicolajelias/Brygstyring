@@ -7,6 +7,7 @@
 #include <Fonts/FreeSerifBoldItalic9pt7b.h>
 #include "BeerFrames.h"
 #include "Version.h"
+#include "PinConfig.h"
 
 #ifndef OLED_RESET
 #define OLED_RESET -1
@@ -25,7 +26,7 @@ namespace {
 }
 
 void DisplayHandler::begin() {
-  Wire.begin();
+  Wire.begin(PIN_OLED_SDA, PIN_OLED_SCL);
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
   display.clearDisplay();
   display.setTextColor(WHITE);

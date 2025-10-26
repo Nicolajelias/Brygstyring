@@ -36,8 +36,6 @@ String EEPROMHandler::getConfigAsString() {
     s += "BoilTime: "; s += String(config.boilTime); s += "\n";
     s += "MashSetpoint: "; s += String(config.mashSetpoint); s += "\n";
     s += "MashoutSetpoint: "; s += String(config.mashoutSetpoint); s += "\n";
-    s += "GrydeAddress: "; s += config.grydeAddress; s += "\n";
-    s += "VentilAddress: "; s += config.ventilAddress; s += "\n";
     return s;
 }
   
@@ -52,8 +50,7 @@ void EEPROMHandler::resetToDefaults() {
     // ssid, password, ip, gw, sn,
     // tempOffset, hysteresis,
     // mashTime, mashoutTime, boilTime,
-    // mashSetpoint, mashoutSetpoint,
-    // grydeAddress, ventilAddress
+    // mashSetpoint, mashoutSetpoint
     Config cfg = {
         "",                 // ssid
         "",                 // password
@@ -66,9 +63,7 @@ void EEPROMHandler::resetToDefaults() {
         10 * 60,            // mashoutTime (10 minutter)
         60 * 60,            // boilTime (60 minutter)
         64.0,               // mashSetpoint (°C)
-        75.0,               // mashoutSetpoint (°C)
-        "28FFA1B2C3D4E5F6",  // grydeAddress (16 hex-tegn)
-        "28FF112233445566"   // ventilAddress (16 hex-tegn)
+        75.0                // mashoutSetpoint (°C)
     };
     saveConfig(cfg);
 }

@@ -1,11 +1,11 @@
 #include "OTAHandler.h"
-#include <ESP8266mDNS.h>
-#include <ESP8266WebServer.h>
-#include <ESP8266HTTPUpdateServer.h>
+#include <ESPmDNS.h>
+#include <WebServer.h>
+#include <HTTPUpdateServer.h>
 #include <Arduino.h>
 
 // Statisk instans af HTTPUpdateServer
-static ESP8266HTTPUpdateServer httpUpdater;
+static HTTPUpdateServer httpUpdater;
 
 void OTAHandler::beginMDNS(const char* hostname) {
   if (!MDNS.begin(hostname)) {
@@ -16,7 +16,7 @@ void OTAHandler::beginMDNS(const char* hostname) {
   Serial.println(hostname);
 }
 
-void OTAHandler::setupHTTPUpdate(ESP8266WebServer &server) {
+void OTAHandler::setupHTTPUpdate(WebServer &server) {
   // Sæt /update-side op uden password (du kan tilføje brugernavn/password om ønsket)
   httpUpdater.setup(&server);
 

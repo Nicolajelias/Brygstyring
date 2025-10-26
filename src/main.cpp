@@ -6,18 +6,14 @@
 #include "EEPROMHandler.h"
 #include "DisplayHandler.h"
 #include "OTAHandler.h"
-#include <ESP8266mDNS.h>
+#include <WiFi.h>
+#include <ESPmDNS.h>
 #include "Version.h"
+#include "PinConfig.h"
 
 // =====================================================================================
 // PIN-KONFIGURATION (tilpas efter behov)
 // =====================================================================================
-static const uint8_t PIN_SENSOR = D4;   // DS18B20 sensorer
-static const uint8_t PIN_GAS    = D6;   // Relæ til gas
-static const uint8_t PIN_PUMP   = D5;   // Relæ til pumpe
-static const uint8_t PIN_BUZZER = D7;   // Buzzer
-static const uint8_t PIN_BUTTON = D3;   // Knap til bekræftelser
-
 // Blink-variabler til ventiltemp
 unsigned long lastBlinkToggle = 0;
 bool blinkState = false;
@@ -35,14 +31,16 @@ void setup() {
   Serial.println("==== Opstart af Brygkontroller (HTTP-OTA) ====");
 
   EEPROMHandler::begin(); 
+  pinMode(PIN_STATUS_LED, OUTPUT);
   pinMode(PIN_GAS, OUTPUT);
   pinMode(PIN_PUMP, OUTPUT);
   pinMode(PIN_BUZZER, OUTPUT);
   pinMode(PIN_BUTTON, INPUT);
+  digitalWrite(PIN_STATUS_LED, LOW);
 
   WiFiHandler::begin();
   WebServerHandler::begin();
-  TemperatureHandler::begin(PIN_SENSOR);
+  TemperatureHandler::begin(PIN_TEMP_GRYDE, PIN_TEMP_VENTIL);
   ProcessHandler::begin(PIN_GAS, PIN_PUMP, PIN_BUZZER, PIN_BUTTON);
   DisplayHandler::begin();
 
@@ -62,7 +60,6 @@ void setup() {
 void loop() {
   WebServerHandler::handleClient();
   WiFiHandler::handleWiFi();
-  MDNS.update();
 
   // Opdater temperatur hvert sekund
   unsigned long now = millis();

@@ -2,8 +2,8 @@
 #ifndef WEBSERVERHANDLER_H
 #define WEBSERVERHANDLER_H
 
-#include <ESP8266WebServer.h>
-#include <ESP8266HTTPUpdateServer.h>
+#include <WebServer.h>
+#include <HTTPUpdateServer.h>
 
 class WebServerHandler {
 public:
@@ -19,8 +19,6 @@ public:
     static void handleStatus();
     static void handleTogglePump();
     static void handleToggleGasValve();
-    static void handleSwapSensorAddresses();
-    static void handleSaveSensorSettings();
 
     // Proces-ruter
     static void handleStartMashing();
@@ -29,12 +27,11 @@ public:
     static void handleStopProcess();
     static void handlePauseProcess();
     static void handleResumeProcess();
-    static void handleReadSensorAddresses();
 
 private:
     static void handleResetProcessState();
-    static ESP8266WebServer server;
-    static ESP8266HTTPUpdateServer httpUpdater;
+    static WebServer server;
+    static HTTPUpdateServer httpUpdater;
 };
 
 #endif // WEBSERVERHANDLER_H

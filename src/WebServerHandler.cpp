@@ -1,17 +1,18 @@
 #include "WebServerHandler.h"
-#include <ESP8266WebServer.h>
-#include <ESP8266HTTPUpdateServer.h>
+#include <WebServer.h>
+#include <HTTPUpdateServer.h>
 #include <Arduino.h>
 #include "EEPROMHandler.h"
 #include "ProcessHandler.h"
 #include "TemperatureHandler.h"
-#include <ESP8266WiFi.h>
-#include <ESP8266mDNS.h>
+#include "PinConfig.h"
+#include <WiFi.h>
+#include <ESPmDNS.h>
 #include <Version.h>
 
 // Statisk webserver og HTTPUpdateServer
-ESP8266WebServer WebServerHandler::server(80);
-ESP8266HTTPUpdateServer WebServerHandler::httpUpdater;
+WebServer WebServerHandler::server(80);
+HTTPUpdateServer WebServerHandler::httpUpdater;
 
 // HTML-header og -footer
 const char* HTML_HEADER = R"html(
@@ -390,61 +391,12 @@ void WebServerHandler::handleResetSettings() {
   ESP.restart();
 }
 
-void WebServerHandler::handleReadSensorAddresses() {
-  String grydeAddr, ventilAddr;
-  if (TemperatureHandler::readActualSensorAddresses(grydeAddr, ventilAddr)) {
-    String json = "{";
-    json += "\"gryde\":\"" + grydeAddr + "\",";
-    json += "\"ventil\":\"" + ventilAddr + "\"";
-    json += "}";
-    server.send(200, "application/json", json);
-  } else {
-    String json = "{\"error\":\"Kunne ikke læse sensoradresser.\"}";
-    server.send(500, "application/json", json);
-  }
-}
-
-void WebServerHandler::handleSwapSensorAddresses() {
-  TemperatureHandler::swapSensorAddresses();
-  String grydeAddr = TemperatureHandler::getGrydeAddressString();
-  String ventilAddr = TemperatureHandler::getVentilAddressString();
-  String json = "{";
-  json += "\"gryde\":\"" + grydeAddr + "\",";
-  json += "\"ventil\":\"" + ventilAddr + "\"";
-  json += "}";
-  server.send(200, "application/json", json);
-}
-
-void WebServerHandler::handleSaveSensorSettings() {
-  Config cfg = EEPROMHandler::getConfig();
-  
-  if (server.hasArg("grydeAddress")) {
-    String addr = server.arg("grydeAddress");
-    addr.trim();
-    if (addr.length() == 16) {
-      strncpy(cfg.grydeAddress, addr.c_str(), sizeof(cfg.grydeAddress));
-    }
-  }
-  if (server.hasArg("ventilAddress")) {
-    String addr = server.arg("ventilAddress");
-    addr.trim();
-    if (addr.length() == 16) {
-      strncpy(cfg.ventilAddress, addr.c_str(), sizeof(cfg.ventilAddress));
-    }
-  }
-  
-  EEPROMHandler::saveConfig(cfg);
-  server.send(200, "text/plain", "Sensor indstillinger gemt.");
-}
 
 void WebServerHandler::handleSettings() {
   const Config &cfg = EEPROMHandler::getConfig();
-  String currentGrydeAddr = TemperatureHandler::getGrydeAddressString();
-  String currentVentilAddr = TemperatureHandler::getVentilAddressString();
 
   String html = HTML_HEADER;
   
-  // Tilbage-knap til hovedsiden
   html += "<div style='text-align:left; margin-bottom:10px;'><button class='button' onclick=\"location.href='/'\">Tilbage til hovedsiden</button></div>";
   
   html += "<h2>WiFi Indstillinger</h2>";
@@ -463,16 +415,9 @@ void WebServerHandler::handleSettings() {
   html += "</form>";
 
   html += "<hr/>";
-  html += "<h2>Sensor Indstillinger</h2>";
-  html += "<form action='/saveSensorSettings' method='POST'>";
-  html += "<label class='label'>Gryde Adresse (hex):</label><br/>";
-  html += "<input type='text' id='grydeAddress' name='grydeAddress' value='" + currentGrydeAddr + "'/><br/>";
-  html += "<label class='label'>Ventil Adresse (hex):</label><br/>";
-  html += "<input type='text' id='ventilAddress' name='ventilAddress' value='" + currentVentilAddr + "'/><br/><br/>";
-  html += "<p><button class='button' type='button' onclick='readSensorAddresses()'>Læs Aktuelle Sensoradresser</button></p>";
-  html += "<p><button class='button' type='button' onclick='swapSensorAddresses()'>Byt Sensoradresser</button></p>";
-  html += "<input class='button' type='submit' value='Gem Sensor Indstillinger'/>";
-  html += "</form>";
+  html += "<h2>Sensorer</h2>";
+  html += "<p>Temperatursensorerne er fast tilsluttet til GPIO " + String(PIN_TEMP_GRYDE) + " (gryde) og GPIO " + String(PIN_TEMP_VENTIL) + " (ventil).</p>";
+  html += "<p>Hver sensor har sin egen bus, så der er ikke længere behov for at gemme adresser.</p>";
   
   html += "<hr/>";
   html += "<div style='text-align:left; margin-bottom:10px;'>";
@@ -481,51 +426,6 @@ void WebServerHandler::handleSettings() {
   html += "</div>";
   html += "<div style='text-align:center; margin-top:20px; font-size:smaller;'>Version: " + String(SOFTWARE_VERSION) + "</div>";
   html += HTML_FOOTER;
-  
-  // JavaScript til sensoradresser
-  html += R"html(
-  <script>
-    function readSensorAddresses() {
-      fetch('/readSensorAddresses')
-        .then(response => response.json().then(data => {
-          if (!response.ok) {
-            const message = data && data.error ? data.error : "Kunne ikke læse sensoradresser.";
-            throw new Error(message);
-          }
-          return data;
-        }))
-        .then(data => {
-          if (data.gryde && data.ventil) {
-            document.getElementById('grydeAddress').value = data.gryde;
-            document.getElementById('ventilAddress').value = data.ventil;
-            alert("Sensoradresser opdateret i felterne. Tryk 'Gem Sensor Indstillinger' for at gemme og genstarte.");
-          } else {
-            throw new Error("Kunne ikke læse sensoradresser.");
-          }
-        })
-        .catch(err => {
-          alert("Fejl: " + err.message);
-        });
-    }
-    
-    function swapSensorAddresses() {
-      fetch('/swapSensorAddresses')
-        .then(response => response.json())
-        .then(data => {
-          if(data.gryde && data.ventil) {
-            document.getElementById('grydeAddress').value = data.gryde;
-            document.getElementById('ventilAddress').value = data.ventil;
-            alert("Sensoradresser byttet. Tryk 'Gem Sensor Indstillinger' for at gemme ændringerne.");
-          } else {
-            alert("Kunne ikke bytte sensoradresser.");
-          }
-        })
-        .catch(err => {
-          alert("Fejl: " + err.message);
-        });
-    }
-  </script>
-  )html";
   
   server.send(200, "text/html", html);
 }
@@ -545,9 +445,6 @@ void WebServerHandler::begin() {
   server.on("/pauseProcess", HTTP_GET, handlePauseProcess);
   server.on("/resumeProcess", HTTP_GET, handleResumeProcess);
   server.on("/resetProcessState", HTTP_GET, handleResetProcessState);
-  server.on("/swapSensorAddresses", HTTP_GET, handleSwapSensorAddresses);
-  server.on("/saveSensorSettings", HTTP_POST, handleSaveSensorSettings);
-  server.on("/readSensorAddresses", HTTP_GET, handleReadSensorAddresses);
   server.on("/debug", handleDebug);
 
   httpUpdater.setup(&server);
