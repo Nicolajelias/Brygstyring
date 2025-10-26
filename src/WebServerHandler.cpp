@@ -399,7 +399,8 @@ void WebServerHandler::handleReadSensorAddresses() {
     json += "}";
     server.send(200, "application/json", json);
   } else {
-    server.send(500, "text/plain", "Kunne ikke læse sensoradresser.");
+    String json = "{\"error\":\"Kunne ikke læse sensoradresser.\"}";
+    server.send(500, "application/json", json);
   }
 }
 
@@ -486,18 +487,24 @@ void WebServerHandler::handleSettings() {
   <script>
     function readSensorAddresses() {
       fetch('/readSensorAddresses')
-        .then(response => response.json())
+        .then(response => response.json().then(data => {
+          if (!response.ok) {
+            const message = data && data.error ? data.error : "Kunne ikke læse sensoradresser.";
+            throw new Error(message);
+          }
+          return data;
+        }))
         .then(data => {
-          if(data.gryde && data.ventil) {
+          if (data.gryde && data.ventil) {
             document.getElementById('grydeAddress').value = data.gryde;
             document.getElementById('ventilAddress').value = data.ventil;
             alert("Sensoradresser opdateret i felterne. Tryk 'Gem Sensor Indstillinger' for at gemme og genstarte.");
           } else {
-            alert("Kunne ikke læse sensoradresser.");
+            throw new Error("Kunne ikke læse sensoradresser.");
           }
         })
         .catch(err => {
-          alert("Fejl: " + err);
+          alert("Fejl: " + err.message);
         });
     }
     
@@ -514,7 +521,7 @@ void WebServerHandler::handleSettings() {
           }
         })
         .catch(err => {
-          alert("Fejl: " + err);
+          alert("Fejl: " + err.message);
         });
     }
   </script>

@@ -2,6 +2,6 @@
 #define VERSION_H
 
 // Definer firmwareversionen – opdater denne streng med hver ny version
-#define SOFTWARE_VERSION "1.0.1"
+#define SOFTWARE_VERSION "1.0.3"
 
 #endif // VERSION_H
