@@ -9,9 +9,8 @@
 // Indkapsling af konstanter og variabler i anonymt namespace
 // =====================================================================
 namespace {
-  const char* AP_SSID    = "BrygAP";
-  //const char* NTP_SERVER = "pool.ntp.org";
-  const char* MDNS_NAME  = "brygkontrol";
+  const char* AP_SSID   = "BrygAP";
+  const char* HOSTNAME  = "brygkontrol";
 
   // Tving en fast IP-adresse i AP-mode
   IPAddress apIP(192, 168, 4, 1);
@@ -24,6 +23,17 @@ namespace {
 
   // Tiden vi bruger på at prøve STA-forbindelse, før vi giver op (i ms)
   const unsigned long STA_CONNECT_TIMEOUT = 60000;  // 2 sek
+
+  void startMDNS(const char* modeLabel) {
+    MDNS.end();  // Sørg for et rent udgangspunkt inden vi starter igen
+    if (MDNS.begin(HOSTNAME)) {
+      MDNS.setInstanceName("Brygkontrol");
+      MDNS.addService("http", "tcp", 80);
+      Serial.printf("[WiFiHandler] mDNS responder startet i %s mode! Tilgå http://%s.local\n", modeLabel, HOSTNAME);
+    } else {
+      Serial.printf("[WiFiHandler] Fejl ved start af mDNS responder i %s mode!\n", modeLabel);
+    }
+  }
 }
 
 // =====================================================================
@@ -45,8 +55,6 @@ void WiFiHandler::begin() {
 
   // Forsøg at forbinde til WiFi (STA)
   WiFi.mode(WIFI_MODE_STA);
-  WiFi.setHostname("brygkontrol");
-  WiFi.begin(cfg.ssid, cfg.password);
 
   // Evt. fast IP i STA, hvis config er sat
   if (cfg.ip[0] != '\0' && cfg.gw[0] != '\0' && cfg.sn[0] != '\0') {
@@ -57,7 +65,16 @@ void WiFiHandler::begin() {
     if(!WiFi.config(ip, gw, sn)) {
       Serial.println("[WiFiHandler] WiFi config mislykkedes, bruger DHCP.");
     }
+  } else {
+    // ESP32 kræver eksplicit DHCP-config for at respektere hostname
+    WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE);
   }
+
+  if (!WiFi.setHostname(HOSTNAME)) {
+    Serial.println("[WiFiHandler] Kunne ikke sætte hostname.");
+  }
+
+  WiFi.begin(cfg.ssid, cfg.password);
 
   Serial.print("[WiFiHandler] Forbinder til: ");
   Serial.println(cfg.ssid);
@@ -76,16 +93,7 @@ void WiFiHandler::begin() {
     Serial.println(WiFi.localIP());
 
     // Initialiser mDNS
-    if (MDNS.begin(MDNS_NAME)) {
-      Serial.println("[WiFiHandler] mDNS responder startet!");
-      MDNS.addService("http", "tcp", 80); // Tilføj mDNS-tjeneste
-      Serial.print("Du kan nu tilgå webinterfacet på http://");
-      Serial.print(MDNS_NAME);
-      Serial.println(".local");
-      //DisplayHandler::showMessage("http://bryg.local");
-    } else {
-      Serial.println("[WiFiHandler] Fejl ved start af mDNS responder!");
-    }
+    startMDNS("STA");
   } else {
     Serial.println("[WiFiHandler] Forbindelse mislykkedes efter kort forsøg. Starter AP.");
     startAP();
@@ -97,6 +105,7 @@ void WiFiHandler::begin() {
 // =====================================================================
 void WiFiHandler::startAP() {
   WiFi.mode(WIFI_MODE_AP);
+  WiFi.softAPsetHostname(HOSTNAME);
 
   // Tving IP-konfiguration på AP
   bool success = WiFi.softAPConfig(apIP, apGW, apSN);
@@ -114,15 +123,7 @@ void WiFiHandler::startAP() {
   Serial.println(WiFi.softAPIP());
 
   // Initialiser mDNS for AP mode
-  if (MDNS.begin(MDNS_NAME)) {
-    Serial.println("[WiFiHandler] mDNS responder startet i AP mode!");
-    MDNS.addService("http", "tcp", 80); // Tilføj mDNS-tjeneste
-    Serial.print("Du kan nu tilgå webinterfacet på http://");
-    Serial.print(MDNS_NAME);
-    Serial.println(".local");
-      } else {
-    Serial.println("[WiFiHandler] Fejl ved start af mDNS responder i AP mode!");
-  }
+  startMDNS("AP");
 }
 
 // =====================================================================
@@ -142,6 +143,7 @@ void WiFiHandler::handleWiFi() {
       }
     }
   }
+
 }
 
 bool WiFiHandler::isAPMode() {
