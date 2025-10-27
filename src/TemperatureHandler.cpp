@@ -18,6 +18,9 @@ namespace {
 }
 
 void TemperatureHandler::begin(uint8_t grydePin, uint8_t ventilPin) {
+  pinMode(grydePin, INPUT_PULLUP);
+  pinMode(ventilPin, INPUT_PULLUP);
+
   static OneWire grydeWire(grydePin);
   static OneWire ventilWire(ventilPin);
   static DallasTemperature grydeDallas(&grydeWire);
@@ -31,6 +34,8 @@ void TemperatureHandler::begin(uint8_t grydePin, uint8_t ventilPin) {
 
   grydeSensor->setWaitForConversion(true);
   ventilSensor->setWaitForConversion(true);
+  grydeSensor->setResolution(12);
+  ventilSensor->setResolution(12);
 }
 
 void TemperatureHandler::readTemperatures() {
@@ -38,24 +43,32 @@ void TemperatureHandler::readTemperatures() {
   ventilTempValid = false;
 
   if (grydeSensor) {
-    grydeSensor->requestTemperatures();
-    float temp = grydeSensor->getTempCByIndex(0);
-    if (isValidTemperature(temp)) {
-      grydeTemp = temp;
-      grydeTempValid = true;
+    auto request = grydeSensor->requestTemperatures();
+    if (!request) {
+      Serial.println("Fejl: Gryde-sensor svarede ikke på request");
     } else {
-      Serial.println("Fejl: Ugyldig gryde-temperatur");
+      float temp = grydeSensor->getTempCByIndex(0);
+      if (isValidTemperature(temp)) {
+        grydeTemp = temp;
+        grydeTempValid = true;
+      } else {
+        Serial.println("Fejl: Ugyldig gryde-temperatur");
+      }
     }
   }
 
   if (ventilSensor) {
-    ventilSensor->requestTemperatures();
-    float temp = ventilSensor->getTempCByIndex(0);
-    if (isValidTemperature(temp)) {
-      ventilTemp = temp;
-      ventilTempValid = true;
+    auto request = ventilSensor->requestTemperatures();
+    if (!request) {
+      Serial.println("Fejl: Ventil-sensor svarede ikke på request");
     } else {
-      Serial.println("Fejl: Ugyldig ventil-temperatur");
+      float temp = ventilSensor->getTempCByIndex(0);
+      if (isValidTemperature(temp)) {
+        ventilTemp = temp;
+        ventilTempValid = true;
+      } else {
+        Serial.println("Fejl: Ugyldig ventil-temperatur");
+      }
     }
   }
 }

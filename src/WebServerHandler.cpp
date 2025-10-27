@@ -49,7 +49,7 @@ const char* HTML_HEADER = R"html(
           let mm = Math.floor(secRemain / 60);
           let ss = secRemain % 60;
           document.getElementById('timeRemaining').innerText = mm + ":" + (ss < 10 ? "0" + ss : ss);
-    
+
           // Opdater indstillingsfelter kun hvis de ikke er i fokus
           const updateIfNotFocused = (id, value) => {
             const el = document.getElementById(id);
@@ -282,7 +282,8 @@ void WebServerHandler::handleStatus() {
   json += "\"mashoutSetpoint\":\"" + String(ProcessHandler::getMashoutSetpoint()) + "\","; 
   json += "\"hysteresis\":\"" + String(ProcessHandler::getHysteresis()) + "\",";
   json += "\"valveOffset\":\"" + String(ProcessHandler::getValveOffset()) + "\",";
-  json += "\"version\":\"" + String(SOFTWARE_VERSION) + "\"";  json += "}";
+  json += "\"version\":\"" + String(SOFTWARE_VERSION) + "\"";
+  json += "}";
   server.send(200, "application/json", json);
 }
 

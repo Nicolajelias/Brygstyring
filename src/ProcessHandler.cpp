@@ -476,6 +476,14 @@ String ProcessHandler::getProcessSymbol() {
   }
 }
 
+ProcessHandler::BrewState ProcessHandler::getCurrentState() {
+  return currentState;
+}
+
+bool ProcessHandler::isTimerStarted() {
+  return timerStarted;
+}
+
 bool ProcessHandler::togglePump() {
   if (currentState == BrewState::IDLE || currentState == BrewState::PAUSED) {
     pumpOn = !pumpOn;

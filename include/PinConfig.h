@@ -11,6 +11,7 @@ constexpr uint8_t PIN_BUZZER      = 21;
 constexpr uint8_t PIN_BUTTON      = 15;
 constexpr uint8_t PIN_OLED_SDA    = 8;
 constexpr uint8_t PIN_OLED_SCL    = 9;
-constexpr uint8_t PIN_STATUS_LED  = 10;
+constexpr uint8_t PIN_RGB_LED     = 48;
+constexpr int8_t  PIN_RGB_LED_PWR = -1;  // Sæt til -1 hvis strømstyring ikke er nødvendig
 
 #endif // PIN_CONFIG_H

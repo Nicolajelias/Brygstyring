@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include <Arduino.h>
 #include "EEPROMHandler.h" // Inkluderer definitionen af Config og EEPROMHandler
+#include "StatusLED.h"
 #include <ESPmDNS.h> // Inkluderer mDNS
 //#include "DisplayHandler.h"
 
@@ -24,11 +25,12 @@ namespace {
   // Tiden vi bruger på at prøve STA-forbindelse, før vi giver op (i ms)
   const unsigned long STA_CONNECT_TIMEOUT = 60000;  // 2 sek
 
-  void startMDNS(const char* modeLabel) {
+  void startMDNS(StatusLED::Mode ledMode, const char* modeLabel) {
     MDNS.end();  // Sørg for et rent udgangspunkt inden vi starter igen
     if (MDNS.begin(HOSTNAME)) {
       MDNS.setInstanceName("Brygkontrol");
       MDNS.addService("http", "tcp", 80);
+      StatusLED::setNetworkMode(ledMode);
       Serial.printf("[WiFiHandler] mDNS responder startet i %s mode! Tilgå http://%s.local\n", modeLabel, HOSTNAME);
     } else {
       Serial.printf("[WiFiHandler] Fejl ved start af mDNS responder i %s mode!\n", modeLabel);
@@ -55,6 +57,7 @@ void WiFiHandler::begin() {
 
   // Forsøg at forbinde til WiFi (STA)
   WiFi.mode(WIFI_MODE_STA);
+  StatusLED::setNetworkMode(StatusLED::Mode::WifiConnecting);
 
   // Evt. fast IP i STA, hvis config er sat
   if (cfg.ip[0] != '\0' && cfg.gw[0] != '\0' && cfg.sn[0] != '\0') {
@@ -93,7 +96,7 @@ void WiFiHandler::begin() {
     Serial.println(WiFi.localIP());
 
     // Initialiser mDNS
-    startMDNS("STA");
+    startMDNS(StatusLED::Mode::WifiConnected, "STA");
   } else {
     Serial.println("[WiFiHandler] Forbindelse mislykkedes efter kort forsøg. Starter AP.");
     startAP();
@@ -105,6 +108,7 @@ void WiFiHandler::begin() {
 // =====================================================================
 void WiFiHandler::startAP() {
   WiFi.mode(WIFI_MODE_AP);
+  StatusLED::setNetworkMode(StatusLED::Mode::AccessPoint);
   WiFi.softAPsetHostname(HOSTNAME);
 
   // Tving IP-konfiguration på AP
@@ -123,7 +127,7 @@ void WiFiHandler::startAP() {
   Serial.println(WiFi.softAPIP());
 
   // Initialiser mDNS for AP mode
-  startMDNS("AP");
+  startMDNS(StatusLED::Mode::AccessPoint, "AP");
 }
 
 // =====================================================================

@@ -6,6 +6,7 @@
 #include "EEPROMHandler.h"
 #include "DisplayHandler.h"
 #include "OTAHandler.h"
+#include "StatusLED.h"
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include "Version.h"
@@ -31,12 +32,11 @@ void setup() {
   Serial.println("==== Opstart af Brygkontroller (HTTP-OTA) ====");
 
   EEPROMHandler::begin(); 
-  pinMode(PIN_STATUS_LED, OUTPUT);
+  StatusLED::begin(PIN_RGB_LED);
   pinMode(PIN_GAS, OUTPUT);
   pinMode(PIN_PUMP, OUTPUT);
   pinMode(PIN_BUZZER, OUTPUT);
   pinMode(PIN_BUTTON, INPUT);
-  digitalWrite(PIN_STATUS_LED, LOW);
 
   WiFiHandler::begin();
   WebServerHandler::begin();
@@ -85,6 +85,9 @@ void loop() {
 
   // Opdater processtyring og display med seneste gyldige temperaturer
   ProcessHandler::update(tGryde, tVentil);
+  auto brewState = ProcessHandler::getCurrentState();
+  bool processRunning = (brewState != ProcessHandler::BrewState::IDLE) && (brewState != ProcessHandler::BrewState::PAUSED);
+
   DisplayHandler::update(
     isGrydeValid ? tGryde : NAN,
     isVentilValid ? tVentil : NAN,
@@ -92,6 +95,9 @@ void loop() {
     ProcessHandler::getProcessStep(),
     ProcessHandler::getRemainingTime()
   );
+
+  StatusLED::setProcessActive(processRunning);
+  StatusLED::update();
 
   if (digitalRead(PIN_BUTTON) == LOW) {
     if (buttonPressStart == 0) {

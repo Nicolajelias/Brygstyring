@@ -8,6 +8,7 @@ Brygstyring er en ESP32-S3-baseret brygkontroller, der overvåger og styrer mæs
 - 128×64 I²C OLED-display med processtatus, tider og temperaturer.
 - Indbygget webserver med status-dashboard, proceskontrol og indstillingsside.
 - WiFi STA/AP fallback med mDNS (`brygkontrol.local`).
+- RGB status-LED med farvekoder for WiFi/AP og animationsmode under aktiv brygproces.
 - OTA-firmwareopdatering (`/update`) og automatisk firmware-navngivning via `rename_firmware.py`.
 
 ## Hardware
@@ -17,7 +18,7 @@ Brygstyring er en ESP32-S3-baseret brygkontroller, der overvåger og styrer mæs
 - Aktiv buzzer.
 - Momentary-knap (benyttes til bekræftelser/start).
 - SSD1306 128×64 OLED (I²C).
-- Status LED samt passende forsyning/styresignaler.
+- RGB status LED samt passende forsyning/styresignaler (GPIO48 data, GPIO38 strøm enable).
 
 | Komponent          | GPIO (ESP32-S3) | Makro i `PinConfig.h` |
 |--------------------|-----------------|------------------------|
@@ -29,7 +30,8 @@ Brygstyring er en ESP32-S3-baseret brygkontroller, der overvåger og styrer mæs
 | Knap               | 15              | `PIN_BUTTON`           |
 | OLED SDA           | 8               | `PIN_OLED_SDA`         |
 | OLED SCL           | 9               | `PIN_OLED_SCL`         |
-| Status LED         | 10              | `PIN_STATUS_LED`       |
+| RGB status LED     | 48              | `PIN_RGB_LED`          |
+| RGB LED strøm      | 38 *(valgfrit)* | `PIN_RGB_LED_PWR`      |
 
 > **Bemærk:** DS18B20-sensorerne kører på separate datalinjer, så der er ikke behov for at håndtere sensoradresser i softwaren. Husk pull-up modstand (typisk 4.7 kΩ) på hver datalinje.
 
