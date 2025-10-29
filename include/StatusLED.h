@@ -10,6 +10,7 @@ public:
   static void begin(uint8_t pin, uint8_t brightness = 64);
   static void setNetworkMode(Mode mode);
   static void setProcessActive(bool active);
+  static void setAwaitingConfirmation(bool active);
   static void update();
 };
 

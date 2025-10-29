@@ -1,5 +1,6 @@
 #include "ProcessHandler.h"
 #include "EEPROMHandler.h"  // For Config
+#include "StatusLED.h"
 #include <Arduino.h>
 #include <stdio.h>
 #include <EEPROM.h>
@@ -7,6 +8,21 @@
 
 // Definer BOILHEATUP-tiden (i sekunder). Her er den sat til 10 minutter.
 static unsigned long boilHeatupTime = 10 * 60;
+
+namespace {
+  constexpr uint8_t BUZZER_CHANNEL = 7;
+constexpr uint32_t BUZZER_FREQUENCY_HZ = 750;
+constexpr uint8_t BUZZER_RESOLUTION_BITS = 10;
+
+  void buzzerOn() {
+    ledcWriteTone(BUZZER_CHANNEL, BUZZER_FREQUENCY_HZ);
+    ledcWrite(BUZZER_CHANNEL, 256); // ca. 25% duty for blødere lyd
+  }
+
+  void buzzerOff() {
+    ledcWrite(BUZZER_CHANNEL, 0);
+  }
+}
 
 struct ProcessState {
   unsigned long processStartEpoch;
@@ -117,7 +133,10 @@ void ProcessHandler::begin(uint8_t gasP, uint8_t pumpP, uint8_t buzzerP, uint8_t
 
   digitalWrite(pinGas, LOW);
   digitalWrite(pinPump, LOW);
-  digitalWrite(pinBuzzer, LOW);
+
+  ledcSetup(BUZZER_CHANNEL, BUZZER_FREQUENCY_HZ, BUZZER_RESOLUTION_BITS);
+  ledcAttachPin(pinBuzzer, BUZZER_CHANNEL);
+  buzzerOff();
 
   timeClient.begin();
   timeClient.update();
@@ -155,6 +174,7 @@ void ProcessHandler::update(float tGryde, float tVentil) {
       if (!timerStarted && (tGryde >= (mashSetpoint - hysteresis))) {
         if (!buzzerActive) {
           buzzerActive = true;
+          StatusLED::setAwaitingConfirmation(true);
           Serial.println("[ProcessHandler] Mæskning setpoint nået. Tryk på knappen for at starte nedtælling.");
         }
         if (userConfirmed) {
@@ -165,6 +185,7 @@ void ProcessHandler::update(float tGryde, float tVentil) {
           endTimeStr = formatEpochTime(processStartEpoch + mashTime);
           buzzerActive = false;
           userConfirmed = false;
+          StatusLED::setAwaitingConfirmation(false);
           saveProcessState();
           Serial.println("[ProcessHandler] Mæskningsnedtælling startet.");
         }
@@ -181,6 +202,7 @@ void ProcessHandler::update(float tGryde, float tVentil) {
     if (!timerStarted && (tGryde >= mashoutSetpoint)) {
         if (!buzzerActive) {
             buzzerActive = true;
+            StatusLED::setAwaitingConfirmation(true);
             Serial.println("[ProcessHandler] Udmæskning setpoint nået. Tryk på knappen for at starte nedtælling af udmæskningstiden.");
         }
         if (userConfirmed) {
@@ -191,6 +213,7 @@ void ProcessHandler::update(float tGryde, float tVentil) {
             endTimeStr = formatEpochTime(processStartEpoch + mashoutTime);
             buzzerActive = false;
             userConfirmed = false;
+            StatusLED::setAwaitingConfirmation(false);
             saveProcessState();
             Serial.println("[ProcessHandler] Udmæskningsnedtælling startet.");
         }
@@ -212,12 +235,17 @@ void ProcessHandler::update(float tGryde, float tVentil) {
           endTimeStr = formatEpochTime(processStartEpoch + boilHeatupTime);
           // For at indikere, at opvarmningen er startet, kan du eventuelt aktivere buzzeren kort.
           buzzerActive = true;
+          StatusLED::setAwaitingConfirmation(true);
+          buzzerOn();
           delay(200); // Buzz kort (200 ms)
           buzzerActive = false;
+          buzzerOff();
+          StatusLED::setAwaitingConfirmation(false);
           saveProcessState();
           Serial.println("[ProcessHandler] BOILHEATUP nedtælling startet.");
       } else {
           if (getRemainingTime() == 0) {
+              StatusLED::setAwaitingConfirmation(true);
               // Når de 30 min er udløbet, skal systemet vente på brugerens tryk for at starte kogetiden.
               // Tjek knappen direkte, da handleBuzzer() ikke vil sætte userConfirmed, hvis buzeren er slukket.
               if (digitalRead(pinButton) == LOW) {
@@ -225,11 +253,13 @@ void ProcessHandler::update(float tGryde, float tVentil) {
                   if (digitalRead(pinButton) == LOW) {
                       currentState = BrewState::BOILING;
                       timerStarted = false; // Kogetiden starter ved næste bekræftelse i BOILING
+                      StatusLED::setAwaitingConfirmation(false);
                       Serial.println("[ProcessHandler] BOILHEATUP bekræftet. Skifter til BOILING (venter på kogepunktbekræftelse).");
                       saveProcessState();
                   }
               }
           } else {
+              StatusLED::setAwaitingConfirmation(false);
               checkTimeAndNextStep(boilHeatupTime);
           }
       }
@@ -245,6 +275,7 @@ void ProcessHandler::update(float tGryde, float tVentil) {
               // Indtil kogetiden starter, signalér med buzzeren, at der skal bekræftes for at starte kogetiden.
               if (!buzzerActive) {
                   buzzerActive = true;
+                  StatusLED::setAwaitingConfirmation(true);
                   Serial.println("[ProcessHandler] Kogepunkt: Vent på bekræftelse. Tryk på knappen for at starte kogetidsnedtællingen.");
               }
               if (userConfirmed) {
@@ -256,6 +287,7 @@ void ProcessHandler::update(float tGryde, float tVentil) {
                   endTimeStr = formatEpochTime(processStartEpoch + boilTime);
                   buzzerActive = false;
                   userConfirmed = false;
+                  StatusLED::setAwaitingConfirmation(false);
                   saveProcessState();
                   Serial.println("[ProcessHandler] Kogetidsnedtælling startet.");
               }
@@ -267,6 +299,7 @@ void ProcessHandler::update(float tGryde, float tVentil) {
                   // Start buzzerlyden for at signalere, at kogetiden er udløbet
                   if (!buzzerActive) {
                       buzzerActive = true;
+                      StatusLED::setAwaitingConfirmation(true);
                       Serial.println("[ProcessHandler] Kogetid udløbet. Buzzeren lyder indtil bruger bekræfter.");
                   }
               } else {
@@ -285,6 +318,7 @@ void ProcessHandler::update(float tGryde, float tVentil) {
                   buzzerActive = false;
                   userConfirmed = false;
                   currentState = BrewState::IDLE;
+                  StatusLED::setAwaitingConfirmation(false);
                   saveProcessState();
                   Serial.println("[ProcessHandler] Kogetid bekræftet. Skifter til IDLE.");
               }
@@ -304,6 +338,7 @@ void ProcessHandler::checkTimeAndNextStep(unsigned long stepTimeSec) {
       if (!userConfirmed) {
         if (!buzzerActive) {
           buzzerActive = true;
+          StatusLED::setAwaitingConfirmation(true);
           Serial.println("[ProcessHandler] Tiden udløbet. Vent på bekræftelse for at skifte til næste trin.");
         }
         return; // Vent på at brugeren trykker.
@@ -350,6 +385,9 @@ void ProcessHandler::stopProcess() {
   timerStarted = false;
   gasControl(false);
   pumpControl(false);
+  buzzerActive = false;
+  buzzerOff();
+  StatusLED::setAwaitingConfirmation(false);
   saveProcessState();
   Serial.println("[ProcessHandler] stopProcess -> IDLE");
 }
@@ -361,6 +399,9 @@ void ProcessHandler::pauseProcess() {
     currentState = BrewState::PAUSED;
     gasControl(false);
     pumpControl(false);
+    buzzerActive = false;
+    buzzerOff();
+    StatusLED::setAwaitingConfirmation(false);
     saveProcessState();
     Serial.println("[ProcessHandler] Proces pauset.");
   }
@@ -591,16 +632,21 @@ void ProcessHandler::pumpControl(bool state) {
 
 void ProcessHandler::handleBuzzer() {
   if (buzzerActive) {
-    digitalWrite(pinBuzzer, HIGH);
+    buzzerOn();
+    StatusLED::setAwaitingConfirmation(true);
     if (digitalRead(pinButton) == LOW) {
       delay(50);
       if (digitalRead(pinButton) == LOW) {
         userConfirmed = true;
         buzzerActive = false;
-        digitalWrite(pinBuzzer, LOW);
+        buzzerOff();
+        StatusLED::setAwaitingConfirmation(false);
         Serial.println("[ProcessHandler] Bruger har bekræftet skift.");
       }
     }
+  }
+  else {
+    buzzerOff();
   }
 }
 
@@ -643,6 +689,8 @@ void ProcessHandler::nextStep() {
   gasControl(false);
   pumpControl(false);
   buzzerActive = false;
+  buzzerOff();
+  StatusLED::setAwaitingConfirmation(false);
   userConfirmed = false;
   buzzerStartTime = millis();
 
