@@ -36,6 +36,8 @@ if os.path.exists(firmware_path):
     export_dir = os.path.join(project_dir, "firmware")
     os.makedirs(export_dir, exist_ok=True)
     exported_path = os.path.join(export_dir, new_firmware_name)
+    if os.path.exists(exported_path):
+        os.remove(exported_path)
     shutil.copy2(new_firmware_path, exported_path)
 
     print("Firmware omdøbt til:", new_firmware_name)

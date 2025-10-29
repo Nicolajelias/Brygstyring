@@ -5,9 +5,8 @@
 #include <EEPROM.h>
 #define EEPROM_PROCESS_STATE_START 100
 
-// Definer BOILHEATUP-tiden (i sekunder). Her er den sat til 30 minutter.
-static unsigned long boilHeatupTime = 30 * 60;
-// static unsigned long boilHeatupTime = 30;
+// Definer BOILHEATUP-tiden (i sekunder). Her er den sat til 10 minutter.
+static unsigned long boilHeatupTime = 10 * 60;
 
 struct ProcessState {
   unsigned long processStartEpoch;
@@ -330,11 +329,20 @@ void ProcessHandler::startMashout() {
 }
 
 void ProcessHandler::startBoiling() {
-  // Skift først til BOILHEATUP, hvor opvarmningen foregår i 30 min
-  currentState = BrewState::BOILHEATUP;
-  timerStarted = false;
+  boilingComplete = false;
+  currentState = BrewState::BOILING;
+  timerStarted = true;
+  processStartMillis = millis();
+  timeClient.update();
+  processStartEpoch  = timeClient.getEpochTime();
+  startTimeStr = getFormattedTime();
+  endTimeStr   = formatEpochTime(processStartEpoch + boilTime);
+  buzzerActive = false;
+  userConfirmed = false;
+  gasControl(true);
+  pumpControl(false);
   saveProcessState();
-  Serial.println("[ProcessHandler] startBoiling -> BOILHEATUP (30 min nedtælling starter automatisk)");
+  Serial.println("[ProcessHandler] startBoiling -> BOILING (kogetid startet med det samme)");
 }
 
 void ProcessHandler::stopProcess() {

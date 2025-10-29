@@ -415,12 +415,6 @@ void WebServerHandler::handleSettings() {
   html += "<input class='button' type='submit' value='Gem WiFi Indstillinger'/>";
   html += "</form>";
 
-  html += "<hr/>";
-  html += "<h2>Sensorer</h2>";
-  html += "<p>Temperatursensorerne er fast tilsluttet til GPIO " + String(PIN_TEMP_GRYDE) + " (gryde) og GPIO " + String(PIN_TEMP_VENTIL) + " (ventil).</p>";
-  html += "<p>Hver sensor har sin egen bus, så der er ikke længere behov for at gemme adresser.</p>";
-  
-  html += "<hr/>";
   html += "<div style='text-align:left; margin-bottom:10px;'>";
   html += "<button class='button' onclick=\"location.href='/update'\">Firmware-opdatering</button>&nbsp;";
   html += "<button class='button' onclick=\"location.href='/resetSettings'\">Nulstil Alle Indstillinger</button>";
