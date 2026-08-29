@@ -3,7 +3,7 @@
 Brygstyring er en ESP32-S3-baseret brygkontroller, der overvåger og styrer mæskning/kogning via to DS18B20-temperatursensorer, relæer til pumpe og gasventil, samt en OLED-statusskærm og webinterface.
 
 ## Funktioner
-- Temperaturovervågning med to DS18B20 sensorer (gryde og ventil) på separate GPIO-busser.
+- Robust, ikke-blokerende temperaturovervågning med to DS18B20-sensorer på separate GPIO-busser, friskhedskontrol og automatisk bus-recovery.
 - Relækontrol for pumpe og gasventil samt buzzer-alarmer og knap-input til brugerbekræftelser.
 - 128×64 I²C OLED-display med processtatus, tider og temperaturer.
 - Indbygget webserver med status-dashboard, proceskontrol og indstillingsside.
@@ -46,7 +46,7 @@ Brygstyring er en ESP32-S3-baseret brygkontroller, der overvåger og styrer mæs
 ```bash
 platformio run
 ```
-Miljøet hedder `esp32-s3-devkitc-1`. Output ligger i `.pio/build/esp32-s3-devkitc-1/`. Post-build scriptet omdøber firmware til `firmware_v<SOFTWARE_VERSION>.bin` baseret på `include/Version.h`.
+Miljøet hedder `esp32-s3-devkitc-1-16mb-psram`. Output ligger i `.pio/build/esp32-s3-devkitc-1-16mb-psram/`. Post-build-scriptet kopierer firmwaren til `firmware/firmware_v<SOFTWARE_VERSION>.bin` baseret på `include/Version.h`.
 
 ### Flashing
 ```bash
@@ -61,6 +61,7 @@ Alternativt kan den genererede `.bin` uploades via OTA (`/update`).
 
 ## Webinterface
 - **Status**: Live temperaturer, procestrin, pumpe/gas-status, tidsinformation.
+- **Sensorsikkerhed**: Dashboardet viser målingernes alder og retry-status. Efter fem sekunder uden en gyldig måling markeres sensoren som utilgængelig, og gas-failsafe aktiveres.
 - **Proceskontrol**: Start/stop/pause/resume for mæskning, mashout og kogning.
 - **Indstillinger**: WiFi-parametre, tider, setpoints, hysterese, ventil-offset.
 - **OTA**: Tilgå `/update` for at uploade ny firmware (kræver `.bin` fra build).
@@ -71,7 +72,7 @@ Konfigurationen (WiFi, temperaturparametre osv.) gemmes i ESP32’ens interne EE
 
 ## Fejlfinding
 - **PlatformIO 4.x fejl (`resultcallback`)**: Opgrader til seneste PlatformIO CLI (`pip install -U platformio`).
-- **Ingen temperaturer**: Kontroller pull-up modstande og kabelføring. Da hver sensor har sin egen pin, skal begge have 3.3 V, GND og data med pull-up.
+- **Ingen temperaturer**: Kontrollér pull-up-modstande og kabelføring. Hver sensor skal have 3,3 V, GND og sin egen datalinje med en ekstern 4,7 kΩ pull-up; ESP32'ens interne pull-up er ikke en robust erstatning ved længere kabler.
 - **WiFi forbinder ikke**: Kontrollér kredsoplysninger i UI’et og genstart. Enheden falder tilbage til AP-tilstand efter timeout.
 
 ## Filstruktur (uddrag)

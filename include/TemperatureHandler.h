@@ -12,6 +12,12 @@ public:
   static float getVentilTemp();
   static bool isGrydeValid();
   static bool isVentilValid();
+  static bool isGrydeHealthy();
+  static bool isVentilHealthy();
+  static uint8_t getGrydeFailureCount();
+  static uint8_t getVentilFailureCount();
+  static unsigned long getGrydeAgeMs();
+  static unsigned long getVentilAgeMs();
 };
 
 #endif // TEMPERATURE_HANDLER_H

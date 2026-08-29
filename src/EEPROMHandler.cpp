@@ -1,19 +1,42 @@
 #include "EEPROMHandler.h"
 #include <EEPROM.h>
 #include <Arduino.h>
+#include <math.h>
+#include <string.h>
 
 #define EEPROM_SIZE 512
 #define EEPROM_CONFIG_START 0
 
 Config EEPROMHandler::config;
 
+namespace {
+bool hasTerminator(const char* value, size_t capacity) {
+    return memchr(value, '\0', capacity) != nullptr;
+}
+
+bool isConfigSane(const Config& cfg) {
+    return hasTerminator(cfg.ssid, sizeof(cfg.ssid)) &&
+           hasTerminator(cfg.password, sizeof(cfg.password)) &&
+           hasTerminator(cfg.ip, sizeof(cfg.ip)) &&
+           hasTerminator(cfg.gw, sizeof(cfg.gw)) &&
+           hasTerminator(cfg.sn, sizeof(cfg.sn)) &&
+           isfinite(cfg.tempOffset) && cfg.tempOffset >= 0.0f && cfg.tempOffset <= 30.0f &&
+           isfinite(cfg.hysteresis) && cfg.hysteresis >= 0.1f && cfg.hysteresis <= 10.0f &&
+           cfg.mashTime >= 60 && cfg.mashTime <= 300UL * 60UL &&
+           cfg.mashoutTime >= 60 && cfg.mashoutTime <= 120UL * 60UL &&
+           cfg.boilTime >= 60 && cfg.boilTime <= 300UL * 60UL &&
+           isfinite(cfg.mashSetpoint) && cfg.mashSetpoint >= 20.0f && cfg.mashSetpoint <= 100.0f &&
+           isfinite(cfg.mashoutSetpoint) && cfg.mashoutSetpoint >= 20.0f && cfg.mashoutSetpoint <= 100.0f;
+}
+}
+
 void EEPROMHandler::begin() {
     EEPROM.begin(EEPROM_SIZE);
     EEPROM.get(EEPROM_CONFIG_START, config);
     // Hvis ssid er tom, antages der, at config ikke er blevet initialiseret korrekt.
-    if (config.ssid[0] == '\0') {
+    if (!isConfigSane(config)) {
+        Serial.println("[EEPROM] Invalid configuration; restoring safe defaults");
         resetToDefaults();
-        save();
     }
 }
 
@@ -25,7 +48,7 @@ Config EEPROMHandler::getConfig() {
 String EEPROMHandler::getConfigAsString() {
     String s = "";
     s += "SSID: "; s += config.ssid; s += "\n";
-    s += "Password: "; s += config.password; s += "\n";
+    s += "Password: [hidden]\n";
     s += "IP: "; s += config.ip; s += "\n";
     s += "Gateway: "; s += config.gw; s += "\n";
     s += "Subnet: "; s += config.sn; s += "\n";

@@ -8,6 +8,7 @@
 #include "BeerFrames.h"
 #include "Version.h"
 #include "PinConfig.h"
+#include <math.h>
 
 #ifndef OLED_RESET
 #define OLED_RESET -1
@@ -75,12 +76,12 @@ void DisplayHandler::update(float tGryde, float tVentil, bool showVentil, const 
   
   // Linje 2: Grydetemperatur
   drawText("Gryde:", 0, 38, 1);
-  drawText(String(tGryde, 1) + " C", 48, 38, 1);
+  drawText(isfinite(tGryde) ? String(tGryde, 1) + " C" : "--.- C", 48, 38, 1);
   
   // Linje 3: Ventiltemperatur (vises kun, hvis showVentil er true)
   drawText("Ventil: ", 0, 48, 1);
   if (showVentil) {
-    drawText(String(tVentil, 1) + " C", 48, 48, 1);
+    drawText(isfinite(tVentil) ? String(tVentil, 1) + " C" : "--.- C", 48, 48, 1);
   } else {
     drawText("     ", 48, 48, 1);
   }

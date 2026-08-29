@@ -23,9 +23,6 @@ const unsigned long longPressThreshold = 3000; // 3000 ms = 3 sekunder
 unsigned long buttonPressStart = 0;
 bool longPressHandled = false;
 
-unsigned long lastTemperatureRead = 0;
-const unsigned long temperatureInterval = 1000; // 1 sekund
-
 void setup() {
   Serial.begin(115200);
   Serial.println();
@@ -61,27 +58,13 @@ void loop() {
   WebServerHandler::handleClient();
   WiFiHandler::handleWiFi();
 
-  // Opdater temperatur hvert sekund
+  // Service both asynchronous DS18B20 conversions without blocking web/UI work.
   unsigned long now = millis();
-  static float tGryde = NAN;
-  static float tVentil = NAN;
-  static bool isGrydeValid = false;
-  static bool isVentilValid = false;
-
-  if (now - lastTemperatureRead >= temperatureInterval) {
-    lastTemperatureRead = now;
-    TemperatureHandler::readTemperatures();
-
-    isGrydeValid = TemperatureHandler::isGrydeValid();
-    isVentilValid = TemperatureHandler::isVentilValid();
-
-    if (isGrydeValid) {
-      tGryde = TemperatureHandler::getGrydeTemp();
-    }
-    if (isVentilValid) {
-      tVentil = TemperatureHandler::getVentilTemp();
-    }
-  }
+  TemperatureHandler::readTemperatures();
+  const bool isGrydeValid = TemperatureHandler::isGrydeValid();
+  const bool isVentilValid = TemperatureHandler::isVentilValid();
+  const float tGryde = TemperatureHandler::getGrydeTemp();
+  const float tVentil = TemperatureHandler::getVentilTemp();
 
   // Opdater processtyring og display med seneste gyldige temperaturer
   ProcessHandler::update(tGryde, tVentil);

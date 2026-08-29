@@ -1,6 +1,7 @@
 #include "ProcessHandler.h"
 #include "EEPROMHandler.h"  // For Config
 #include "StatusLED.h"
+#include "TemperatureHandler.h"
 #include <Arduino.h>
 #include <stdio.h>
 #include <EEPROM.h>
@@ -225,6 +226,11 @@ void ProcessHandler::update(float tGryde, float tVentil) {
 
     case BrewState::BOILHEATUP:
       // Under BOILHEATUP skal gasventilen være tændt og pumpen slukket.
+      if (!isfinite(tGryde) || !isfinite(tVentil)) {
+          gasControl(false);
+          pumpControl(false);
+          return;
+      }
       gasControl(true);
       pumpControl(false);
       if (!timerStarted) {
@@ -266,6 +272,11 @@ void ProcessHandler::update(float tGryde, float tVentil) {
       break;
 
       case BrewState::BOILING:
+      if (!isfinite(tGryde) || !isfinite(tVentil)) {
+          gasControl(false);
+          pumpControl(false);
+          return;
+      }
       // Under kogning skal gasventilen være tændt indtil kogetiden udløber.
       if (!boilingComplete) {
           // Sørg for, at gasventilen er tændt, og pumpen slukket.
@@ -350,6 +361,11 @@ void ProcessHandler::checkTimeAndNextStep(unsigned long stepTimeSec) {
 }
 
 void ProcessHandler::startMashing() {
+  if (!TemperatureHandler::isGrydeValid() || !TemperatureHandler::isVentilValid()) {
+    gasControl(false);
+    Serial.println("[Safety] Mashing rejected: temperature data unavailable");
+    return;
+  }
   currentState = BrewState::MASHING;
   timerStarted = false;
   saveProcessState();
@@ -357,6 +373,11 @@ void ProcessHandler::startMashing() {
 }
 
 void ProcessHandler::startMashout() {
+  if (!TemperatureHandler::isGrydeValid() || !TemperatureHandler::isVentilValid()) {
+    gasControl(false);
+    Serial.println("[Safety] Mashout rejected: temperature data unavailable");
+    return;
+  }
   currentState = BrewState::MASHOUT;
   timerStarted = false;
   saveProcessState();
@@ -364,6 +385,11 @@ void ProcessHandler::startMashout() {
 }
 
 void ProcessHandler::startBoiling() {
+  if (!TemperatureHandler::isGrydeValid() || !TemperatureHandler::isVentilValid()) {
+    gasControl(false);
+    Serial.println("[Safety] Boiling rejected: temperature data unavailable");
+    return;
+  }
   boilingComplete = false;
   currentState = BrewState::BOILING;
   timerStarted = true;
@@ -428,12 +454,12 @@ void ProcessHandler::saveProcessState() {
 bool ProcessHandler::restoreProcessState() {
   ProcessState ps;
   EEPROM.get(EEPROM_PROCESS_STATE_START, ps);
-  if (ps.processStartEpoch == 0)
+  if (ps.processStartEpoch == 0 || ps.currentState > static_cast<uint8_t>(BrewState::PAUSED))
     return false;
   
   timeClient.update();
   unsigned long currentEpoch = timeClient.getEpochTime();
-  if (currentEpoch - ps.processStartEpoch < 3600) {
+  if (currentEpoch >= ps.processStartEpoch && currentEpoch - ps.processStartEpoch < 3600) {
     currentState = static_cast<BrewState>(ps.currentState);
     timerStarted = ps.timerStarted;
     processStartEpoch = ps.processStartEpoch;
@@ -543,6 +569,11 @@ bool ProcessHandler::togglePump() {
 
 bool ProcessHandler::toggleGasValve() {
   if (currentState == BrewState::IDLE || currentState == BrewState::PAUSED) {
+    if (!gasValveOn && (!TemperatureHandler::isGrydeValid() || !TemperatureHandler::isVentilValid())) {
+      Serial.println("[Safety] Manual gas rejected: temperature data unavailable");
+      gasControl(false);
+      return false;
+    }
     gasValveOn = !gasValveOn;
     digitalWrite(pinGas, gasValveOn ? HIGH : LOW);
   }
@@ -654,6 +685,16 @@ void ProcessHandler::handleBuzzer() {
 void ProcessHandler::temperatureControl(float currentTemp, float setpoint, float tVentil) {
   static unsigned long lastGasSwitchTime = 0;
   unsigned long now = millis();
+
+  // Missing or stale sensor data always wins over the minimum switch interval.
+  if (!isfinite(currentTemp) || !isfinite(tVentil)) {
+    if (gasValveOn) {
+      gasControl(false);
+      lastGasSwitchTime = now;
+      Serial.println("[Safety] Gas closed: temperature data unavailable");
+    }
+    return;
+  }
 
   // Hvis vi ikke har ventet 5 sekunder siden sidste skift, gør intet.
   if (now - lastGasSwitchTime < 5000) {
