@@ -11,7 +11,7 @@ Brygstyring er en ESP32-S3-baseret brygkontroller, der overvåger og styrer mæs
 - Git-baseret SemVer, buildnummer, commit-hash, SHA-256 og firmwaremanifest.
 - WiFi STA/AP fallback med mDNS (`brygkontrol.local`).
 - RGB status-LED med farvekoder for WiFi/AP og animationsmode under aktiv brygproces.
-- OTA-firmwareopdatering (`/update`) og automatisk firmware-navngivning via `rename_firmware.py`.
+- Loginbeskyttet og valideret OTA-firmwareopdatering (`/update`) med rollback.
 
 ## Hardware
 - `ESP32-S3-DevKitC-1` (8 MB Flash anbefales).
@@ -67,7 +67,7 @@ Alternativt kan den genererede `.bin` uploades via OTA (`/update`).
 - **Proceskontrol**: Start/stop/pause/resume for mæskning, mashout og kogning.
 - **Opskrifter**: `/recipes` gemmer, redigerer, henter og sletter komplette brygprofiler med humletilsætninger.
 - **Indstillinger**: WiFi-parametre, tider, setpoints, hysterese, ventil-offset.
-- **OTA**: Tilgå `/update` for at uploade ny firmware (kræver `.bin` fra build).
+- **OTA**: Tilgå `/update` for en sikker, loginbeskyttet opdatering. Opsætning er beskrevet i [docs/ota.md](docs/ota.md).
 - **Debug**: `/debug` returnerer den aktuelle EEPROM-konfiguration som tekst.
 
 ## EEPROM & Indstillinger

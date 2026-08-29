@@ -1,11 +1,25 @@
 #pragma once
 
+#include <Arduino.h>
 #include <WebServer.h>
 
 namespace OTAHandler {
-  // Starter mDNS, så du kan tilgå enheden via fx bryg.local
-  void beginMDNS(const char* hostname);
+enum class State : uint8_t { IDLE, UPLOADING, VALIDATING, SUCCESS, FAILED, REBOOTING };
 
-  // Sætter HTTP Update Server op på en given webserver
-  void setupHTTPUpdate(WebServer &server);
-}
+struct Status {
+  State state = State::IDLE;
+  uint8_t progress = 0;
+  String error;
+  String lastResult;
+  bool authConfigured = false;
+  bool rollbackSupported = false;
+  bool pendingBootValidation = false;
+};
+
+void begin();
+void update(unsigned long now);
+void registerRoutes(WebServer& server);
+bool maintenanceActive();
+const Status& getStatus();
+const char* stateName(State state);
+}  // namespace OTAHandler

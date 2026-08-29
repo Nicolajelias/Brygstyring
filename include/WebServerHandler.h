@@ -3,7 +3,6 @@
 #define WEBSERVERHANDLER_H
 
 #include <WebServer.h>
-#include <HTTPUpdateServer.h>
 
 class WebServerHandler {
 public:
@@ -36,9 +35,9 @@ public:
     static void handleResumeProcess();
 
 private:
+    static bool rejectDuringOTA();
     static void handleResetProcessState();
     static WebServer server;
-    static HTTPUpdateServer httpUpdater;
 };
 
 #endif // WEBSERVERHANDLER_H

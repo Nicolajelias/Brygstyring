@@ -38,10 +38,11 @@ void setup() {
   pinMode(PIN_BUTTON, INPUT);
 
   WiFiHandler::begin();
-  WebServerHandler::begin();
   TemperatureHandler::begin(PIN_TEMP_GRYDE, PIN_TEMP_VENTIL);
   ProcessHandler::begin(PIN_GAS, PIN_PUMP, PIN_BUZZER, PIN_BUTTON);
   RecipeManager::restoreActive();
+  OTAHandler::begin();
+  WebServerHandler::begin();
   DisplayHandler::begin();
 
   DisplayHandler::displayBeerAnimation();
@@ -63,6 +64,7 @@ void loop() {
 
   // Service both asynchronous DS18B20 conversions without blocking web/UI work.
   unsigned long now = millis();
+  OTAHandler::update(now);
   TemperatureHandler::readTemperatures();
   const bool isGrydeValid = TemperatureHandler::isGrydeValid();
   const bool isVentilValid = TemperatureHandler::isVentilValid();
@@ -70,7 +72,9 @@ void loop() {
   const float tVentil = TemperatureHandler::getVentilTemp();
 
   // Opdater processtyring og display med seneste gyldige temperaturer
-  ProcessHandler::update(tGryde, tVentil);
+  if (!OTAHandler::maintenanceActive()) {
+    ProcessHandler::update(tGryde, tVentil);
+  }
   auto brewState = ProcessHandler::getCurrentState();
   bool processRunning = (brewState != ProcessHandler::BrewState::IDLE) && (brewState != ProcessHandler::BrewState::PAUSED);
 
@@ -85,7 +89,7 @@ void loop() {
   StatusLED::setProcessActive(processRunning);
   StatusLED::update();
 
-  if (brewState == ProcessHandler::BrewState::IDLE && digitalRead(PIN_BUTTON) == LOW) {
+  if (!OTAHandler::maintenanceActive() && brewState == ProcessHandler::BrewState::IDLE && digitalRead(PIN_BUTTON) == LOW) {
     if (buttonPressStart == 0) {
       buttonPressStart = millis();
       longPressHandled = false;
