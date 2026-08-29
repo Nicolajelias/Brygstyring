@@ -7,6 +7,8 @@ Brygstyring er en ESP32-S3-baseret brygkontroller, der overvåger og styrer mæs
 - Relækontrol for pumpe og gasventil samt buzzer-alarmer og knap-input til brugerbekræftelser.
 - 128×64 I²C OLED-display med processtatus, tider og temperaturer.
 - Indbygget webserver med status-dashboard, proceskontrol og indstillingsside.
+- Navngivet opskriftsbibliotek med op til 12 komplette brygprofiler og otte humlealarmer pr. opskrift.
+- Git-baseret SemVer, buildnummer, commit-hash, SHA-256 og firmwaremanifest.
 - WiFi STA/AP fallback med mDNS (`brygkontrol.local`).
 - RGB status-LED med farvekoder for WiFi/AP og animationsmode under aktiv brygproces.
 - OTA-firmwareopdatering (`/update`) og automatisk firmware-navngivning via `rename_firmware.py`.
@@ -46,7 +48,7 @@ Brygstyring er en ESP32-S3-baseret brygkontroller, der overvåger og styrer mæs
 ```bash
 platformio run
 ```
-Miljøet hedder `esp32-s3-devkitc-1-16mb-psram`. Output ligger i `.pio/build/esp32-s3-devkitc-1-16mb-psram/`. Post-build-scriptet kopierer firmwaren til `firmware/firmware_v<SOFTWARE_VERSION>.bin` baseret på `include/Version.h`.
+Miljøet hedder `esp32-s3-devkitc-1-16mb-psram`. Almindeligt buildoutput ligger i `.pio/build/esp32-s3-devkitc-1-16mb-psram/`; versionsnavngivet firmware, SHA-256 og manifest ligger i `.build-artifacts/esp32-s3-devkitc-1-16mb-psram/`.
 
 ### Flashing
 ```bash
@@ -63,6 +65,7 @@ Alternativt kan den genererede `.bin` uploades via OTA (`/update`).
 - **Status**: Live temperaturer, procestrin, pumpe/gas-status, tidsinformation.
 - **Sensorsikkerhed**: Dashboardet viser målingernes alder og retry-status. Efter fem sekunder uden en gyldig måling markeres sensoren som utilgængelig, og gas-failsafe aktiveres.
 - **Proceskontrol**: Start/stop/pause/resume for mæskning, mashout og kogning.
+- **Opskrifter**: `/recipes` gemmer, redigerer, henter og sletter komplette brygprofiler med humletilsætninger.
 - **Indstillinger**: WiFi-parametre, tider, setpoints, hysterese, ventil-offset.
 - **OTA**: Tilgå `/update` for at uploade ny firmware (kræver `.bin` fra build).
 - **Debug**: `/debug` returnerer den aktuelle EEPROM-konfiguration som tekst.

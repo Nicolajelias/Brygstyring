@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <NTPClient.h>
 #include <WiFiUdp.h>
+#include "BrewRecipe.h"
 
 class ProcessHandler {
 public:
@@ -43,6 +44,15 @@ public:
   static BrewState getCurrentState();
   static bool isTimerStarted();
 
+  // Humletilsætninger under kogning
+  static void setHopSchedule(const HopAddition* additions, uint8_t count);
+  static uint8_t getHopCount();
+  static const HopAddition* getHop(uint8_t index);
+  static bool isHopTriggered(uint8_t index);
+  static bool isHopAlarmActive();
+  static const char* getActiveHopName();
+  static void acknowledgeHopAlarm();
+
   // Toggle-funktioner
   static bool togglePump();
   static bool toggleGasValve();
@@ -70,6 +80,8 @@ private:
   static void gasControl(bool state);
   static void pumpControl(bool state);
   static void handleBuzzer();
+  static void checkHopAlarms();
+  static void resetHopAlarms();
   // Ændret signatur for at inkludere ventiltemperatur
   static void temperatureControl(float currentTemp, float setpoint, float tVentil);
 
@@ -114,6 +126,12 @@ private:
   static bool userConfirmed;
   static bool buzzerActive;
   static unsigned long buzzerStartTime;
+  static HopAddition hopSchedule[MAX_HOP_ADDITIONS];
+  static bool hopTriggered[MAX_HOP_ADDITIONS];
+  static uint8_t hopCount;
+  static int8_t activeHopIndex;
+  static bool hopAlarmActive;
+  static bool hopAlarmAwaitingRelease;
 
   // Bryg-tilstand og visningstider
   static BrewState currentState;

@@ -19,6 +19,13 @@ public:
     static void handleStatus();
     static void handleTogglePump();
     static void handleToggleGasValve();
+    static void handleRecipesPage();
+    static void handleRecipesList();
+    static void handleRecipeItem();
+    static void handleRecipeSave();
+    static void handleRecipeActivate();
+    static void handleRecipeDelete();
+    static void handleAcknowledgeHop();
 
     // Proces-ruter
     static void handleStartMashing();

@@ -11,6 +11,7 @@
 #include <ESPmDNS.h>
 #include "Version.h"
 #include "PinConfig.h"
+#include "RecipeManager.h"
 
 // =====================================================================================
 // PIN-KONFIGURATION (tilpas efter behov)
@@ -28,7 +29,8 @@ void setup() {
   Serial.println();
   Serial.println("==== Opstart af Brygkontroller (HTTP-OTA) ====");
 
-  EEPROMHandler::begin(); 
+  EEPROMHandler::begin();
+  RecipeManager::begin();
   StatusLED::begin(PIN_RGB_LED);
   pinMode(PIN_GAS, OUTPUT);
   pinMode(PIN_PUMP, OUTPUT);
@@ -39,6 +41,7 @@ void setup() {
   WebServerHandler::begin();
   TemperatureHandler::begin(PIN_TEMP_GRYDE, PIN_TEMP_VENTIL);
   ProcessHandler::begin(PIN_GAS, PIN_PUMP, PIN_BUZZER, PIN_BUTTON);
+  RecipeManager::restoreActive();
   DisplayHandler::begin();
 
   DisplayHandler::displayBeerAnimation();
@@ -82,7 +85,7 @@ void loop() {
   StatusLED::setProcessActive(processRunning);
   StatusLED::update();
 
-  if (digitalRead(PIN_BUTTON) == LOW) {
+  if (brewState == ProcessHandler::BrewState::IDLE && digitalRead(PIN_BUTTON) == LOW) {
     if (buttonPressStart == 0) {
       buttonPressStart = millis();
       longPressHandled = false;

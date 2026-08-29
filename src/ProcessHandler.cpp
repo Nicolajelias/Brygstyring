@@ -72,6 +72,12 @@ float ProcessHandler::valveOffset     = 5.0f;
 bool ProcessHandler::userConfirmed    = false;
 bool ProcessHandler::buzzerActive     = false;
 unsigned long ProcessHandler::buzzerStartTime = 0;
+HopAddition ProcessHandler::hopSchedule[MAX_HOP_ADDITIONS] = {};
+bool ProcessHandler::hopTriggered[MAX_HOP_ADDITIONS] = {};
+uint8_t ProcessHandler::hopCount = 0;
+int8_t ProcessHandler::activeHopIndex = -1;
+bool ProcessHandler::hopAlarmActive = false;
+bool ProcessHandler::hopAlarmAwaitingRelease = false;
 
 // Bryg-tilstand
 ProcessHandler::BrewState ProcessHandler::currentState = ProcessHandler::BrewState::IDLE;
@@ -294,6 +300,7 @@ void ProcessHandler::update(float tGryde, float tVentil) {
                   processStartMillis = millis();
                   processStartEpoch  = timeClient.getEpochTime();
                   timerStarted = true;
+                  resetHopAlarms();
                   startTimeStr = getFormattedTime();
                   endTimeStr = formatEpochTime(processStartEpoch + boilTime);
                   buzzerActive = false;
@@ -303,6 +310,7 @@ void ProcessHandler::update(float tGryde, float tVentil) {
                   Serial.println("[ProcessHandler] Kogetidsnedtælling startet.");
               }
           } else {
+              checkHopAlarms();
               // Når kogetiden er i gang, hvis den udløber:
               if (getRemainingTime() == 0) {
                   boilingComplete = true;    // Markér at kogetiden er udløbet
@@ -393,6 +401,7 @@ void ProcessHandler::startBoiling() {
   boilingComplete = false;
   currentState = BrewState::BOILING;
   timerStarted = true;
+  resetHopAlarms();
   processStartMillis = millis();
   timeClient.update();
   processStartEpoch  = timeClient.getEpochTime();
@@ -412,6 +421,9 @@ void ProcessHandler::stopProcess() {
   gasControl(false);
   pumpControl(false);
   buzzerActive = false;
+  hopAlarmActive = false;
+  hopAlarmAwaitingRelease = false;
+  activeHopIndex = -1;
   buzzerOff();
   StatusLED::setAwaitingConfirmation(false);
   saveProcessState();
@@ -478,6 +490,9 @@ void ProcessHandler::resetProcessState() {
   processStartMillis = 0;
   gasControl(false);
   pumpControl(false);
+  hopAlarmActive = false;
+  hopAlarmAwaitingRelease = false;
+  activeHopIndex = -1;
   ProcessState ps = {0, static_cast<uint8_t>(BrewState::IDLE), false};
   EEPROM.put(EEPROM_PROCESS_STATE_START, ps);
   EEPROM.commit();
@@ -557,6 +572,34 @@ ProcessHandler::BrewState ProcessHandler::getCurrentState() {
 
 bool ProcessHandler::isTimerStarted() {
   return timerStarted;
+}
+
+void ProcessHandler::setHopSchedule(const HopAddition* additions, uint8_t count) {
+  hopCount = min(count, MAX_HOP_ADDITIONS);
+  for (uint8_t index = 0; index < MAX_HOP_ADDITIONS; ++index) {
+    hopSchedule[index] = index < hopCount && additions ? additions[index] : HopAddition{};
+  }
+  resetHopAlarms();
+}
+
+uint8_t ProcessHandler::getHopCount() { return hopCount; }
+const HopAddition* ProcessHandler::getHop(uint8_t index) { return index < hopCount ? &hopSchedule[index] : nullptr; }
+bool ProcessHandler::isHopTriggered(uint8_t index) { return index < hopCount && hopTriggered[index]; }
+bool ProcessHandler::isHopAlarmActive() { return hopAlarmActive; }
+const char* ProcessHandler::getActiveHopName() {
+  return activeHopIndex >= 0 && activeHopIndex < hopCount ? hopSchedule[activeHopIndex].name : "";
+}
+
+void ProcessHandler::acknowledgeHopAlarm() {
+  if (!hopAlarmActive) return;
+  Serial.printf("[Hops] Addition acknowledged: %s\n", getActiveHopName());
+  hopAlarmActive = false;
+  hopAlarmAwaitingRelease = false;
+  activeHopIndex = -1;
+  if (!buzzerActive) {
+    buzzerOff();
+    StatusLED::setAwaitingConfirmation(false);
+  }
 }
 
 bool ProcessHandler::togglePump() {
@@ -662,6 +705,19 @@ void ProcessHandler::pumpControl(bool state) {
 }
 
 void ProcessHandler::handleBuzzer() {
+  if (hopAlarmActive) {
+    buzzerOn();
+    StatusLED::setAwaitingConfirmation(true);
+    if (hopAlarmAwaitingRelease) {
+      if (digitalRead(pinButton) == HIGH) hopAlarmAwaitingRelease = false;
+      return;
+    }
+    if (digitalRead(pinButton) == LOW) {
+      delay(50);
+      if (digitalRead(pinButton) == LOW) acknowledgeHopAlarm();
+    }
+    return;
+  }
   if (buzzerActive) {
     buzzerOn();
     StatusLED::setAwaitingConfirmation(true);
@@ -678,6 +734,29 @@ void ProcessHandler::handleBuzzer() {
   }
   else {
     buzzerOff();
+  }
+}
+
+void ProcessHandler::resetHopAlarms() {
+  for (uint8_t index = 0; index < MAX_HOP_ADDITIONS; ++index) hopTriggered[index] = false;
+  hopAlarmActive = false;
+  hopAlarmAwaitingRelease = false;
+  activeHopIndex = -1;
+}
+
+void ProcessHandler::checkHopAlarms() {
+  if (currentState != BrewState::BOILING || !timerStarted || hopAlarmActive) return;
+  const unsigned long remaining = getRemainingTime();
+  for (uint8_t index = 0; index < hopCount; ++index) {
+    if (!hopTriggered[index] && remaining <= hopSchedule[index].secondsBeforeBoilEnd) {
+      hopTriggered[index] = true;
+      activeHopIndex = index;
+      hopAlarmActive = true;
+      hopAlarmAwaitingRelease = true;
+      Serial.printf("[Hops] Add now: %s (%lu min before boil end)\n", hopSchedule[index].name,
+                    hopSchedule[index].secondsBeforeBoilEnd / 60UL);
+      return;
+    }
   }
 }
 
