@@ -12,6 +12,12 @@ elektrisk jumperkontinuitet og mekaniske mål er endnu ikke målt. Den tidligere
 netliste til løse MAX31865-chips er et alternativ, ikke ekstra komponenter
 der skal monteres sammen med modulerne.
 
+Pull-up-praecisering: De tre `103`-modstande paa modulbilledet matcher
+referencedesignets 10 kohm pull-ups paa SDI/CS/SCLK. For de valgte moduler
+er ekstra CS-pull-ups derfor valgfri bestykningsplads, normalt umonteret;
+indbygget CS-HIGH under reset skal bekraeftes paa de leverede moduler.
+De historiske krav til egne CS-modstande nedenfor vedroerer loese chips.
+
 Opdateret 28. oktober 2026. F1-F4 er rettet i koden og testet med simuleret
 SPI/MAX31865, flash og GPIO samt de faktiske temperatur-, proces- og
 kalibrerings-HTTP-handlere. Firmwarebuild bestod. Ingen firmware er uploadet

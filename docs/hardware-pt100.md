@@ -24,8 +24,8 @@ modulets eget referencedesign for forsyning, EN/reset, boot, USB og antenne.
 
 | ESP32-S3 | Forbindelse | Retning set fra ESP32 | Bemaerkning |
 | --- | --- | --- | --- |
-| GPIO4 | MAX31865 gryde CS | Ud | Aktiv LOW; 10 kohm pull-up til 3.3 V |
-| GPIO5 | MAX31865 ventil CS | Ud | Aktiv LOW; 10 kohm pull-up til 3.3 V |
+| GPIO4 | MAX31865 gryde CS | Ud | Aktiv LOW; se modulafsnittet om indbygget/valgfri pull-up |
+| GPIO5 | MAX31865 ventil CS | Ud | Aktiv LOW; se modulafsnittet om indbygget/valgfri pull-up |
 | GPIO12 | Begge MAX31865 SCLK/SCK | Ud | Faelles SPI-clock |
 | GPIO13 | Begge MAX31865 SDI/MOSI | Ud | ESP32 sender data |
 | GPIO14 | Begge MAX31865 SDO/MISO | Ind | MAX31865 sender data; kun valgt chip driver |
@@ -79,8 +79,35 @@ skal kontrolleres mod komponent-/monteringssiden, saa footprintet ikke spejles.
 | CLK | GPIO12 | GPIO12 |
 | SDO | GPIO14 (MISO) | GPIO14 (MISO) |
 | SDI | GPIO13 (MOSI) | GPIO13 (MOSI) |
-| CS | GPIO4; 10 kohm pull-up til ESP32 3V3 | GPIO5; 10 kohm pull-up til ESP32 3V3 |
+| CS | GPIO4; ekstern 10 kohm er valgfri, normalt ikke monteret | GPIO5; ekstern 10 kohm er valgfri, normalt ikke monteret |
 | DRDY | Separat testpunkt eller uforbundet | Separat testpunkt eller uforbundet |
+
+### Pull-ups paa modulet
+
+Komponentsiden viser tre modstande maerket `103` (= 10 kohm) ved
+SPI-indgangenes diodekredsloeb. Dette matcher Adafruits referencedesign,
+hvor R6/R7/R8 traekker henholdsvis SDI/CS/SCLK paa chipsiden op til
+modulets regulerede 3.3 V. Derfor forventes det viste modul allerede at
+have de noedvendige pull-ups. Fotoet identificerer komponenterne og
+layoutligheden, men erstatter ikke et skema/maalekontrol af klonen.
+Se [Adafruits referenceskema](https://github.com/adafruit/Adafruit-MAX31865-PCB/blob/master/Adafruit%20MAX31865.sch).
+
+Der skal normalt ikke monteres ekstra pull-ups til dette breakout-modul:
+
+| Signal | Ekstern pull-up paa carrier-PCB |
+| --- | --- |
+| CS, en pr. modul | Normalt unoedvendig. Reserver evt. plads til 10 kohm til ESP32 3V3; lad den umonteret ved bekraeftet indbygget pull-up. |
+| CLK og SDI | Ingen ekstra modstand noedvendig. |
+| SDO/MISO | Ingen paakraevet pull-up; dette er SPI, ikke I2C. |
+| DRDY/RDY | Ingen; push-pull-udgang, aktuelt ubrugt. |
+| F+, RTD+, RTD-, F- | Ingen pull-ups til forsyning. |
+
+Foer frigivelse kontrolleres, at MAX31865-chipben CS er HIGH under ESP32-reset
+med modulet forsynet. I referencedesignet sidder en diode mellem header-CS
+og chip-CS, saa en ohmmaaling fra header-CS til 3V3 behoever ikke vise
+praecis 10 kohm. De to modulers 3V3-udgange skal stadig holdes adskilt.
+Kravet om egen CS-pull-up i afsnittet om loese chips nedenfor gaelder
+et kredsloeb uden breakout-modulets indbyggede komponenter.
 
 VIN til 3.3 V ligger inden for det fotograferede moduls paatrykte
 indgangsomraade. Brug 3.3 V logik, selv om modulet ogsaa er maerket 5 V.
