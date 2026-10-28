@@ -62,7 +62,6 @@ void loop() {
   WebServerHandler::handleClient();
   WiFiHandler::handleWiFi();
 
-  // Service both asynchronous DS18B20 conversions without blocking web/UI work.
   unsigned long now = millis();
   OTAHandler::update(now);
   TemperatureHandler::readTemperatures();

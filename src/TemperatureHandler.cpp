@@ -1,64 +1,91 @@
 #include "TemperatureHandler.h"
-#include <OneWire.h>
+#include "PinConfig.h"
 #include <Arduino.h>
-#include <DallasTemperature.h>
+#include <Adafruit_MAX31865.h>
+#include <SPI.h>
+#include <limits.h>
 #include <math.h>
 
 namespace {
-constexpr uint8_t SENSOR_RESOLUTION_BITS = 12;
-constexpr unsigned long CONVERSION_TIME_MS = 750;
+constexpr float RTD_NOMINAL_OHMS = 100.0f;
+constexpr float REFERENCE_OHMS = 430.0f;
+constexpr unsigned long BIAS_SETTLING_MS = 10;
+constexpr unsigned long CONVERSION_TIME_MS = 65;
 constexpr unsigned long SAMPLE_INTERVAL_MS = 1000;
 constexpr unsigned long MAX_READING_AGE_MS = 5000;
 constexpr uint8_t REINITIALIZE_AFTER_FAILURES = 3;
 
 struct SensorState {
-  DallasTemperature* bus = nullptr;
+  Adafruit_MAX31865* converter = nullptr;
+  uint8_t chipSelect = 0;
   float lastGoodValue = NAN;
   unsigned long lastGoodMs = 0;
   uint8_t consecutiveFailures = 0;
-  bool detected = false;
+  bool hasReading = false;
   const char* name = nullptr;
 };
 
+enum class ConversionPhase { Idle, BiasSettling, Converting };
+
 SensorState gryde;
 SensorState ventil;
-bool conversionPending = false;
+ConversionPhase conversionPhase = ConversionPhase::Idle;
 unsigned long conversionStartedMs = 0;
+unsigned long phaseStartedMs = 0;
 
-bool isValidTemperature(const float value, const bool hasPreviousValue) {
-  if (!isfinite(value) || value == DEVICE_DISCONNECTED_C || value < -20.0f || value > 125.0f) {
-    return false;
-  }
-  // 85 C is the DS18B20 power-on register value. It is accepted after the
-  // first real conversion because it can be a legitimate brewing temperature.
-  return hasPreviousValue || fabsf(value - 85.0f) > 0.01f;
+bool isValidTemperature(const float value) {
+  return isfinite(value) && value >= -20.0f && value <= 125.0f;
 }
 
 void configureSensor(SensorState& sensor) {
-  if (!sensor.bus) return;
-  sensor.bus->begin();
-  sensor.bus->setWaitForConversion(false);
-  sensor.bus->setCheckForConversion(false);
-  sensor.bus->setResolution(SENSOR_RESOLUTION_BITS);
-  sensor.detected = sensor.bus->getDeviceCount() > 0;
+  if (!sensor.converter) return;
+  sensor.converter->begin(MAX31865_3WIRE);
+  sensor.converter->enable50Hz(true);
+}
+
+void startOneShot(const SensorState& sensor) {
+  SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE1));
+  digitalWrite(sensor.chipSelect, LOW);
+  SPI.transfer(MAX31865_CONFIG_REG | 0x80);
+  SPI.transfer(MAX31865_CONFIG_BIAS | MAX31865_CONFIG_1SHOT |
+               MAX31865_CONFIG_3WIRE | MAX31865_CONFIG_FILT50HZ);
+  digitalWrite(sensor.chipSelect, HIGH);
+  SPI.endTransaction();
+}
+
+uint16_t readRtdRegister(const SensorState& sensor) {
+  SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE1));
+  digitalWrite(sensor.chipSelect, LOW);
+  SPI.transfer(MAX31865_RTDMSB_REG);
+  const uint8_t highByte = SPI.transfer(0xFF);
+  const uint8_t lowByte = SPI.transfer(0xFF);
+  digitalWrite(sensor.chipSelect, HIGH);
+  SPI.endTransaction();
+  return (static_cast<uint16_t>(highByte) << 8) | lowByte;
 }
 
 void requestConversions() {
-  if (gryde.bus) gryde.bus->requestTemperatures();
-  if (ventil.bus) ventil.bus->requestTemperatures();
+  gryde.converter->clearFault();
+  ventil.converter->clearFault();
+  gryde.converter->enableBias(true);
+  ventil.converter->enableBias(true);
   conversionStartedMs = millis();
-  conversionPending = true;
+  phaseStartedMs = conversionStartedMs;
+  conversionPhase = ConversionPhase::BiasSettling;
 }
 
 void readSensor(SensorState& sensor, const unsigned long now) {
-  if (!sensor.bus) return;
-  const float candidate = sensor.bus->getTempCByIndex(0);
-  if (isValidTemperature(candidate, sensor.lastGoodMs != 0)) {
-    const bool recovered = sensor.consecutiveFailures > 0 || !sensor.detected;
+  if (!sensor.converter) return;
+  const uint16_t raw = readRtdRegister(sensor);
+  const uint8_t fault = sensor.converter->readFault(MAX31865_FAULT_NONE);
+  sensor.converter->enableBias(false);
+  const float candidate = sensor.converter->calculateTemperature(raw >> 1, RTD_NOMINAL_OHMS, REFERENCE_OHMS);
+  if (fault == 0 && (raw & 1) == 0 && isValidTemperature(candidate)) {
+    const bool recovered = sensor.consecutiveFailures > 0 || !sensor.hasReading;
     sensor.lastGoodValue = candidate;
     sensor.lastGoodMs = now;
     sensor.consecutiveFailures = 0;
-    sensor.detected = true;
+    sensor.hasReading = true;
     if (recovered) {
       Serial.printf("[Temperature] %s recovered: %.2f C\n", sensor.name, candidate);
     }
@@ -66,35 +93,40 @@ void readSensor(SensorState& sensor, const unsigned long now) {
   }
 
   if (sensor.consecutiveFailures < UINT8_MAX) ++sensor.consecutiveFailures;
-  Serial.printf("[Temperature] Invalid %s reading (%.2f C), failure %u\n",
-                sensor.name, candidate, sensor.consecutiveFailures);
+  Serial.printf("[Temperature] Invalid %s reading (%.2f C, raw 0x%04X, fault 0x%02X), failure %u\n",
+                sensor.name, candidate, raw, fault, sensor.consecutiveFailures);
   if (sensor.consecutiveFailures % REINITIALIZE_AFTER_FAILURES == 0) {
-    Serial.printf("[Temperature] Reinitializing %s OneWire bus\n", sensor.name);
+    Serial.printf("[Temperature] Reinitializing %s MAX31865\n", sensor.name);
     configureSensor(sensor);
   }
 }
 
 bool isUsable(const SensorState& sensor) {
-  return sensor.lastGoodMs != 0 && (millis() - sensor.lastGoodMs) <= MAX_READING_AGE_MS;
+  return sensor.hasReading && (millis() - sensor.lastGoodMs) <= MAX_READING_AGE_MS;
 }
 
 unsigned long readingAge(const SensorState& sensor) {
-  return sensor.lastGoodMs == 0 ? ULONG_MAX : millis() - sensor.lastGoodMs;
+  return sensor.hasReading ? millis() - sensor.lastGoodMs : ULONG_MAX;
 }
 }  // namespace
 
 void TemperatureHandler::begin(uint8_t grydePin, uint8_t ventilPin) {
-  pinMode(grydePin, INPUT_PULLUP);
-  pinMode(ventilPin, INPUT_PULLUP);
+  pinMode(grydePin, OUTPUT);
+  pinMode(ventilPin, OUTPUT);
+  digitalWrite(grydePin, HIGH);
+  digitalWrite(ventilPin, HIGH);
+  SPI.begin(PIN_TEMP_SCK, PIN_TEMP_MISO, PIN_TEMP_MOSI);
 
-  static OneWire grydeWire(grydePin);
-  static OneWire ventilWire(ventilPin);
-  static DallasTemperature grydeDallas(&grydeWire);
-  static DallasTemperature ventilDallas(&ventilWire);
+  static Adafruit_MAX31865 grydeConverter(grydePin, &SPI);
+  static Adafruit_MAX31865 ventilConverter(ventilPin, &SPI);
 
-  gryde.bus = &grydeDallas;
+  gryde = SensorState{};
+  ventil = SensorState{};
+  gryde.converter = &grydeConverter;
+  gryde.chipSelect = grydePin;
   gryde.name = "pot sensor";
-  ventil.bus = &ventilDallas;
+  ventil.converter = &ventilConverter;
+  ventil.chipSelect = ventilPin;
   ventil.name = "valve sensor";
   configureSensor(gryde);
   configureSensor(ventil);
@@ -102,14 +134,23 @@ void TemperatureHandler::begin(uint8_t grydePin, uint8_t ventilPin) {
 }
 
 void TemperatureHandler::readTemperatures() {
+  if (!gryde.converter || !ventil.converter) return;
   const unsigned long now = millis();
-  if (conversionPending) {
-    if (now - conversionStartedMs < CONVERSION_TIME_MS) return;
+  if (conversionPhase == ConversionPhase::BiasSettling) {
+    if (now - phaseStartedMs < BIAS_SETTLING_MS) return;
+    startOneShot(gryde);
+    startOneShot(ventil);
+    phaseStartedMs = millis();
+    conversionPhase = ConversionPhase::Converting;
+    return;
+  }
+  if (conversionPhase == ConversionPhase::Converting) {
+    if (now - phaseStartedMs < CONVERSION_TIME_MS) return;
     readSensor(gryde, now);
     readSensor(ventil, now);
-    conversionPending = false;
+    conversionPhase = ConversionPhase::Idle;
   }
-  if (!conversionPending && now - conversionStartedMs >= SAMPLE_INTERVAL_MS) {
+  if (conversionPhase == ConversionPhase::Idle && now - conversionStartedMs >= SAMPLE_INTERVAL_MS) {
     requestConversions();
   }
 }

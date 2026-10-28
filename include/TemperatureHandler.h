@@ -2,7 +2,6 @@
 #define TEMPERATURE_HANDLER_H
 
 #include <Arduino.h>
-#include <DallasTemperature.h>
 
 class TemperatureHandler {
 public:

@@ -1,9 +1,9 @@
 # Brygstyring
 
-Brygstyring er en ESP32-S3-baseret brygkontroller, der overvåger og styrer mæskning/kogning via to DS18B20-temperatursensorer, relæer til pumpe og gasventil, samt en OLED-statusskærm og webinterface.
+Brygstyring er en ESP32-S3-baseret brygkontroller, der overvåger og styrer mæskning/kogning via to 3-leder PT100-temperatursensorer med hver sin MAX31865, relæer til pumpe og gasventil, samt en OLED-statusskærm og webinterface.
 
 ## Funktioner
-- Robust, ikke-blokerende temperaturovervågning med to DS18B20-sensorer på separate GPIO-busser, friskhedskontrol og automatisk bus-recovery.
+- Robust, ikke-blokerende temperaturovervågning med to 3-leder PT100-sensorer, fælles SPI-bus, 50 Hz-filter, friskhedskontrol og automatisk geninitialisering ved fejl.
 - Relækontrol for pumpe og gasventil samt buzzer-alarmer og knap-input til brugerbekræftelser.
 - 128×64 I²C OLED-display med processtatus, tider og temperaturer.
 - Indbygget webserver med status-dashboard, proceskontrol og indstillingsside.
@@ -14,18 +14,22 @@ Brygstyring er en ESP32-S3-baseret brygkontroller, der overvåger og styrer mæs
 - Loginbeskyttet og valideret OTA-firmwareopdatering (`/update`) med rollback.
 
 ## Hardware
-- `ESP32-S3-DevKitC-1` (8 MB Flash anbefales).
-- 2 × DS18B20 temperatursensor (tre-ledet udgave).
+- `ESP32-S3-DevKitC-1` (projektets build er konfigureret til 16 MB flash og 8 MB OPI PSRAM).
+- 2 × PT100 temperatursensor, 3-leder, IEC 60751 (100 ohm ved 0 °C).
+- 2 × MAX31865 til PT100, hver med 430 ohm præcisionsreference og korrekt 3-lederforbindelse.
 - Relæmodul til pumpe (230 V) og gasventil (sørg for galvanisk isolation).
 - Aktiv buzzer.
 - Momentary-knap (benyttes til bekræftelser/start).
 - SSD1306 128×64 OLED (I²C).
-- RGB status LED samt passende forsyning/styresignaler (GPIO48 data, GPIO38 strøm enable).
+- Adresserbar RGB status-LED med GPIO48 data. Separat strøm-enable er deaktiveret i den aktuelle pin-konfiguration.
 
 | Komponent          | GPIO (ESP32-S3) | Makro i `PinConfig.h` |
 |--------------------|-----------------|------------------------|
-| DS18B20 gryde      | 4               | `PIN_TEMP_GRYDE`       |
-| DS18B20 ventil     | 5               | `PIN_TEMP_VENTIL`      |
+| MAX31865 gryde CS  | 4               | `PIN_TEMP_GRYDE`       |
+| MAX31865 ventil CS | 5               | `PIN_TEMP_VENTIL`      |
+| MAX31865 fælles SCK | 12             | `PIN_TEMP_SCK`         |
+| MAX31865 fælles SDI/MOSI | 13        | `PIN_TEMP_MOSI`        |
+| MAX31865 fælles SDO/MISO | 14        | `PIN_TEMP_MISO`        |
 | Pumpe-relæ         | 18              | `PIN_PUMP`             |
 | Gasventil-relæ     | 17              | `PIN_GAS`              |
 | Buzzer             | 21              | `PIN_BUZZER`           |
@@ -33,9 +37,9 @@ Brygstyring er en ESP32-S3-baseret brygkontroller, der overvåger og styrer mæs
 | OLED SDA           | 8               | `PIN_OLED_SDA`         |
 | OLED SCL           | 9               | `PIN_OLED_SCL`         |
 | RGB status LED     | 48              | `PIN_RGB_LED`          |
-| RGB LED strøm      | 38 *(valgfrit)* | `PIN_RGB_LED_PWR`      |
+| RGB LED strøm      | Ingen (`-1`)    | `PIN_RGB_LED_PWR`      |
 
-> **Bemærk:** DS18B20-sensorerne kører på separate datalinjer, så der er ikke behov for at håndtere sensoradresser i softwaren. Husk pull-up modstand (typisk 4.7 kΩ) på hver datalinje.
+> **PCB-grundlag:** Se [docs/hardware-pt100.md](docs/hardware-pt100.md) for alle forbindelser, MAX31865-chipben, sensorstik, referencekomponenter og sikkerhedskrav. PT100 er passive modstandssensorer og må ikke tilsluttes som de tidligere digitale sensorer.
 
 ## Software & Build
 
@@ -75,7 +79,7 @@ Konfigurationen (WiFi, temperaturparametre osv.) gemmes i ESP32’ens interne EE
 
 ## Fejlfinding
 - **PlatformIO 4.x fejl (`resultcallback`)**: Opgrader til seneste PlatformIO CLI (`pip install -U platformio`).
-- **Ingen temperaturer**: Kontrollér pull-up-modstande og kabelføring. Hver sensor skal have 3,3 V, GND og sin egen datalinje med en ekstern 4,7 kΩ pull-up; ESP32'ens interne pull-up er ikke en robust erstatning ved længere kabler.
+- **Ingen/forkerte temperaturer**: Kontrollér MAX31865-forsyning, SPI, individuelle CS-signaler, 430 ohm reference og både fysisk og softwaremæssig 3-lederkonfiguration. De to ledninger fra samme ende af PT100-elementet skal føres separat til FORCE+ og RTDIN+. Se PCB-grundlaget; de gamle OneWire-pull-ups skal ikke bruges.
 - **WiFi forbinder ikke**: Kontrollér kredsoplysninger i UI’et og genstart. Enheden falder tilbage til AP-tilstand efter timeout.
 
 ## Filstruktur (uddrag)
@@ -85,7 +89,7 @@ Konfigurationen (WiFi, temperaturparametre osv.) gemmes i ESP32’ens interne EE
 │   └── Version.h            # Software-version
 ├── src/
 │   ├── main.cpp             # App-entry, setup/loop
-│   ├── TemperatureHandler.cpp# DS18B20 håndtering
+│   ├── TemperatureHandler.cpp# PT100/MAX31865 håndtering
 │   ├── WebServerHandler.cpp # Webserver & UI
 │   ├── WiFiHandler.cpp      # WiFi + mDNS
 │   └── ...                  # Proces, display, OTA mm.
