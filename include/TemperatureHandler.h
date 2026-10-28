@@ -2,6 +2,7 @@
 #define TEMPERATURE_HANDLER_H
 
 #include <Arduino.h>
+#include "TemperatureCalibration.h"
 
 class TemperatureHandler {
 public:
@@ -9,6 +10,11 @@ public:
   static void readTemperatures();
   static float getGrydeTemp();
   static float getVentilTemp();
+  static float getGrydeUncalibratedTemp();
+  static float getVentilUncalibratedTemp();
+  static TemperatureCalibration getGrydeCalibration();
+  static TemperatureCalibration getVentilCalibration();
+  static bool saveCalibration(const TemperatureCalibration& gryde, const TemperatureCalibration& ventil);
   static bool isGrydeValid();
   static bool isVentilValid();
   static bool isGrydeHealthy();

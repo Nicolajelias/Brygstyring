@@ -168,11 +168,14 @@ void ProcessHandler::begin(uint8_t gasP, uint8_t pumpP, uint8_t buzzerP, uint8_t
 }
 
 void ProcessHandler::update(float tGryde, float tVentil) {
+  enforceTemperatureSafety();
   timeClient.update();
+  enforceTemperatureSafety();
   handleBuzzer();
 
   switch (currentState) {
     case BrewState::IDLE:
+    case BrewState::PAUSED:
       break;
 
     case BrewState::MASHING:
@@ -617,8 +620,7 @@ bool ProcessHandler::toggleGasValve() {
       gasControl(false);
       return false;
     }
-    gasValveOn = !gasValveOn;
-    digitalWrite(pinGas, gasValveOn ? HIGH : LOW);
+    gasControl(!gasValveOn);
   }
   return gasValveOn;
 }
@@ -695,8 +697,17 @@ float ProcessHandler::getMashoutSetpoint() {
 // PRIVATE METODER
 // ============================
 void ProcessHandler::gasControl(bool state) {
+  // Every path to gas ON, including manual control, uses the same interlock.
+  state = state && TemperatureHandler::isGrydeHealthy() && TemperatureHandler::isVentilHealthy();
   gasValveOn = state;
   digitalWrite(pinGas, state ? HIGH : LOW);
+}
+
+void ProcessHandler::enforceTemperatureSafety() {
+  if (gasValveOn && (!TemperatureHandler::isGrydeHealthy() || !TemperatureHandler::isVentilHealthy())) {
+    gasControl(false);
+    Serial.println("[Safety] Gas closed: temperature fault or stale data");
+  }
 }
 
 void ProcessHandler::pumpControl(bool state) {

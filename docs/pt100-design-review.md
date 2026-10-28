@@ -1,5 +1,50 @@
 # PT100: kodekontrol og grundlag for PCB-design
 
+## Status efter rettelser og tilføjelse af kalibrering
+
+**Modulvalg:** Brugeren har efterfølgende vist et lilla MAX31865-breakout
+med VIN/GND/3V3/CLK/SDO/SDI/CS/DRDY. Carrier-PCB'et planlægges nu med to
+af disse moduler. [Hardwaredokumentet](hardware-pt100.md) indeholder den
+tilpassede forbindelsesoversigt. Referenceværdi, jumpere og mekaniske mål
+er endnu ikke verificeret; billedet viser kun undersiden. Den tidligere
+netliste til løse MAX31865-chips er et alternativ, ikke ekstra komponenter
+der skal monteres sammen med modulerne.
+
+Opdateret 28. oktober 2026. F1-F4 er rettet i koden og testet med simuleret
+SPI/MAX31865, flash og GPIO samt de faktiske temperatur-, proces- og
+kalibrerings-HTTP-handlere. Firmwarebuild bestod. Ingen firmware er uploadet
+til anlægget som del af denne ændring.
+
+Valideret build: `2.2.0-dev.2+g52de072.dirty`, build 15, PlatformIO Espressif32
+7.0.1 og Adafruit MAX31865 1.6.2. RAM: 53.480 byte; programstørrelse: 986.565 byte.
+Firmware SHA-256: `6fab0e8ead9a0546b8b74b4d77be66fbc844e8d6267b91effc71d3157f392f91`.
+De otte grupper af host-regressionstests bestod, inklusive de faktiske
+kalibrerings-HTTP-handlere. JavaScript-syntaks, lokale dokumentlinks og
+`git diff --check` er også kontrolleret.
+
+| Fund | Aktuel status |
+| --- | --- |
+| F1 | Central sensorinterlock lukker gas i alle seks driftstilstande; alle gas-ON-veje kontrollerer begge sensorer. Første målefejl spærrer gas. |
+| F2 | Minimum 70 ms konverteringsventetid, kontrol af 1SHOT og timeout ved 110 ms. |
+| F3 | Konfiguration og thresholds verificeres; one-shot-start skal kvitteres ved readback før afslutning accepteres. Tidsstempel sættes til konverteringsstart. |
+| F4 | Manuel fault-detection-cyklus før hver måling, settling i begge switchtilstande og kontrol af fault-register. |
+| F5 | Brugeren har bekræftet ESP32-S3-DevKitC-1 N16R8. Boardnavnet er rettet; 16 MB QIO flash og 8 MB OPI PSRAM er bevaret. |
+| F6 | LED-data kan vælges som GPIO48 eller GPIO38 via `BRYG_RGB_LED_GPIO` i platformio.ini. Fysisk boardrevision er ikke oplyst; GPIO48 er bevaret som standard. |
+| F7 | README angiver nu passiv buzzer/transducer og passende driver til 750 Hz. |
+
+Separat ét-/topunktskalibrering, validering og flashlagring er tilføjet.
+Den aktuelle driftsbeskrivelse findes i [hardwaredokumentet](hardware-pt100.md)
+og [kalibreringsvejledningen](pt100-calibration.md). De simulerede tests beviser
+ikke analog målenøjagtighed, alle fysiske ledningsfejl eller fysisk afbrydelsestid.
+PCB-/hardwaretestplanen skal fortsat udføres. Kør `python scripts/test_pt100.py`
+på Windows med PlatformIOs MinGW-toolchain for at gentage regressionstestene.
+
+**Resten af rapporten er den historiske gennemgang før rettelserne.** Fil- og
+linjehenvisninger, den tidligere buildhash og beskrivelser af åbne firmwarefejl
+nedenfor dokumenterer den oprindelige tilstand og er overhalet af status ovenfor.
+
+## Historisk gennemgang før rettelser
+
 Dato: 28. oktober 2026. Gennemgået arbejdsmappe ved Git HEAD `6cd08c7`, inklusive lokale, ikke-committede PT100-ændringer.
 
 ## Konklusion og valideringsstatus

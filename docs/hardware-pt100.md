@@ -3,9 +3,10 @@
 > Review 28. oktober 2026: Se [den samlede designrapport](pt100-design-review.md)
 > for valideringsstatus, fysiske DevKit-headerben og fund F1-F7. Sensorernes
 > netforbindelser er kontrolleret mod databladet, og firmwarebuildet lykkes.
-> Der er aabne firmwarefejl, herunder manglende vedvarende gasinterlock ved
-> manuel gas i IDLE/PAUSED og for kort konverteringsventetid. Dette dokument
-> er et skemagrundlag, ikke en produktions- eller driftstilladelse.
+> Firmwarefund F1-F4 er nu rettet og regressionstestet med simulerede perifere
+> enheder. N16R8 er bekraeftet af brugeren. Se den aktuelle firmwarebeskrivelse
+> nedenfor og [kalibreringsvejledningen](pt100-calibration.md). Fysisk
+> validering paa PCB og sensorer er fortsat ikke udfoert.
 
 ## Forudsaetninger
 
@@ -13,7 +14,7 @@ Firmware er aendret til to IEC 60751 PT100 (100 ohm ved 0 C, alpha 0.00385),
 hver med sin MAX31865 og en 430 ohm referencemodstand. PT1000 og moduler med
 4.3 kohm reference passer ikke til denne konfiguration.
 
-Oversigten tager udgangspunkt i det eksisterende ESP32-S3-DevKitC-1 som
+Oversigten tager udgangspunkt i det bekraeftede ESP32-S3-DevKitC-1-N16R8 som
 controller paa et carrier-PCB. Alle ESP32-tal er GPIO-numre, ikke fysiske
 headerben eller ESP32-modulben. Kontroller footprint og headerplacering mod
 netop dit DevKit. Et PCB med et loest ESP32-S3-WROOM-modul kraever desuden
@@ -47,11 +48,81 @@ til ekstra belastninger. Flash-/PSRAM-pins afhaenger af modulvarianten;
 GPIO35/36/37 skal bl.a. reserveres ved den aktuelle OPI PSRAM-konfiguration.
 
 GPIO48 til onboard-RGB passer til det oprindelige officielle DevKitC-1.
-Officiel revision 1.1 bruger GPIO38 som RGB-data og kraever firmwaretilpasning.
-Laas boardrevision og hukommelsesvariant i BOM; boardfilens N8R8-navn er
-ikke konsistent med dens 16 MB flash-konfiguration. Se designrapporten.
+Officiel revision 1.1 bruger GPIO38 som RGB-data. Vaelg 48 eller 38 med
+`-DBRYG_RGB_LED_GPIO=48` i platformio.ini. Revisionen skal stadig fastlaegges
+ved kontrol af det fysiske board. Boardfilens betegnelse er rettet til N16R8
+og svarer til 16 MB QIO flash og 8 MB OPI PSRAM.
 
-## MAX31865-moduler
+## Valgt MAX31865-modul fra brugerens foto
+
+Brugeren har valgt det lilla breakout-modul med teksten "MAX31865 2/3/4 Wire
+Platinum RTD Converter", "Vin: 3-5VDC" og "Vlogic: 3-5VDC". Carrier-PCB'et
+planlaegges med to af disse moduler, et pr. PT100. Fotoet viser undersiden;
+producent, modulrevision, referencemodstand og loddejumpere kan ikke
+fastslaas ud fra denne side alene.
+
+Benraekken er, laest fra VIN-enden mod DRDY-enden paa billedet:
+`VIN - GND - 3V3 - CLK - SDO - SDI - CS - DRDY`.
+Dette er en signalraekke, ikke en bekraeftet fysisk pin-1-nummerering.
+Undersidefotoet maa ikke bruges direkte som et top-view-footprint: orientering
+skal kontrolleres mod komponent-/monteringssiden, saa footprintet ikke spejles.
+
+| Maerkning paa det viste modul | Gryde-modul | Ventil-modul |
+| --- | --- | --- |
+| VIN | ESP32 3V3 | ESP32 3V3 |
+| GND | Logik-GND | Logik-GND |
+| 3V3 | Lad uforbundet | Lad uforbundet |
+| CLK | GPIO12 | GPIO12 |
+| SDO | GPIO14 (MISO) | GPIO14 (MISO) |
+| SDI | GPIO13 (MOSI) | GPIO13 (MOSI) |
+| CS | GPIO4; 10 kohm pull-up til ESP32 3V3 | GPIO5; 10 kohm pull-up til ESP32 3V3 |
+| DRDY | Separat testpunkt eller uforbundet | Separat testpunkt eller uforbundet |
+
+VIN til 3.3 V ligger inden for det fotograferede moduls paatrykte
+indgangsomraade. Brug 3.3 V logik, selv om modulet ogsaa er maerket 5 V.
+Paa Adafruits referencedesign er den ekstra 3.3 V-pin en regulatorudgang;
+det lilla moduls konkrete kredsloeb er endnu ikke dokumenteret. Derfor
+forbindes dets 3V3-ben hverken til ESP32-forsyningen eller det andet moduls
+3V3-ben. Foer brug kontrolleres faktisk forsyning ved MAX31865 (3.0-3.6 V)
+og at SPI-signaler/pull-ups er kompatible med ESP32 ved VIN = 3.3 V.
+Se [Adafruits pinbeskrivelse som reference, ikke som identifikation af klonen](https://learn.adafruit.com/adafruit-max31865-rtd-pt100-amplifier/pinouts).
+
+Sensorenden paa fotoet har fire forbindelser: `F+`, `RTD+`, `RTD-`, `F-`.
+Til hver 3-leder PT100 anvendes:
+
+| Modulben | Sensorforbindelse |
+| --- | --- |
+| F+ | Foerste leder fra den dobbelte ende af PT100-elementet |
+| RTD+ | Anden leder fra samme ende; separat fra F+ paa PCB |
+| RTD- | Enkelt leder fra modsatte ende |
+| F- | Forbindes lokalt til RTD- via korrekt jumper eller kort bro |
+
+Derudover skal modulets interne FORCE2 forbindes til FORCE+ gennem dets
+3-ledervalg. FORCE2 er ikke et separat ben i den viste header. Praecise
+lodde-/skaerepunkter kan foerst angives efter kontrol af komponentsiden
+eller et skema for netop dette modul; foelg ikke automatisk Adafruits
+jumperplacering paa et ukendt modul.
+
+Kontroller disse punkter inden footprint og BOM laases:
+
+- PT100-udgaven skal have Rref = 430 ohm til den aktuelle firmware.
+  Almindelig firecifret modstandsmaerkning `4300` betyder 430 ohm;
+  `4301` betyder 4.3 kohm og er ikke den valgte PT100-konfiguration.
+  Maerket MAX31865 alene identificerer ikke referencevaerdien.
+- 3-lederkonfiguration kontrolleres paa hvert modul: FORCE2 til FORCE+,
+  RTD- til F-, og ingen bro mellem F+ og RTD+. Kontroller uden tilsluttet
+  sensor og uden spaending, da sensorens lederpar ellers kan ligne en bro.
+- Headerpitch, sensorheaderpitch, raekkeafstand, boardkontur, hulplaceringer,
+  stik-/terminalhoejde og frigang skal maales eller hentes fra en maalsat
+  tegning for dette modul. Fotoet har ingen maalestok.
+
+Carrier-PCB'et skal ikke have et ekstra saet MAX31865-chips og
+referencemodstande i parallel med modulerne. Chipbenkortet senere i dette
+dokument er reference for kontrol og et alternativ til modulmontage.
+Firmwarepins og kalibreringsfunktion passer til modulplanen ovenfor;
+den elektriske kompatibilitet er betinget af de naevnte komponentkontroller.
+
+## Generel reference for MAX31865-moduler
 
 | Modulsignal | Gryde-modul | Ventil-modul |
 | --- | --- | --- |
@@ -180,23 +251,42 @@ spaending, stroem, spoletype og model paa pumpe, ventiler og relaeinterface.
 
 ## Firmware og idriftsaettelse
 
-Maalingerne sker cirka en gang pr. sekund med 50 Hz-filter. Bias aktiveres,
-der ventes mindst 10 ms via tilstandsmaskinen, begge one-shot-konverteringer
-startes, og resultaterne laeses efter mindst 65 ms uden blokerende ventekald.
-Dette er den aktuelle implementering: 65 ms er for kort i forhold til
-databladets maksimum paa 66 ms ved 50 Hz. Faerdigmelding/timeout og en
-konservativ ventetid skal indfoeres, jf. designrapportens F2-F3.
-Bias slukkes efter aflaesning for at begraense selvopvarmning.
-Godkendt procesinterval er fortsat -20 til 125 C, selv om PT100 kan have et
-stoerre fysisk maaleomraade. Hardwarefejlflag og ugyldige temperaturer afvises.
-Seneste gyldige maaling bevares, indtil dens alder er over fem sekunder;
-derefter returneres NAN. I automatiske varmefaser medfoerer dette gas-OFF,
-naar proceskontrollen koerer. Manuel gas i IDLE/PAUSED har derimod ingen
-vedvarende sensorinterlock og kan forblive ON. Denne fejl skal rettes.
-En enkelt fejlaflaesning betyder heller ikke oejeblikkelig gasafbrydelse.
-Geninitialisering sker ved hver tredje fejl. Koden aflaeser kun eksisterende
-fault-status og starter ikke den saerlige fault-detection-cyklus; alle
-ledningsfejl er derfor ikke dokumenteret daekket. Se rapportens F1-F4.
+Hver kanal har sin egen ikke-blokerende tilstandsmaskine med cirka et sekund
+mellem cyklusstarter. Konfiguration og elektriske threshold-registre
+tilbageaflaeses. Bias aktiveres med 12 ms settling, derefter koeres den
+manuelle fault-detection-cyklus med 12 ms ventetid ved aaben FORCE-switch,
+kontrol af afslutning og fault-status, og 12 ms settling efter lukning.
+Dette er dimensioneret til det beskrevne 100 nF PT100-filter; vaesentligt
+andre filtre/kabler kraever ny kontrol af RC-tiderne.
+
+One-shot-kommandoens 1SHOT-bit skal kunne aflaeses sat umiddelbart efter
+start. Resultatet accepteres tidligst efter 70 ms, med 1SHOT nulstillet og
+de oevrige konfigurationsbits intakte. Et stadig sat 1SHOT-bit giver fejl
+ved 110 ms; en haengende fault-cyklus giver fejl ved 20 ms. Fristerne
+kontrolleres ved naeste service af loekken. Bias slukkes efter maaling/fejl.
+Sensorvaerdien tidsstemples ved konverteringsstart, saa sen aflaesning ikke
+goer gamle data friske. Adfaerden skal ogsaa verificeres paa de fysiske chips.
+
+Baade ukorrigeret og kalibreret temperatur skal ligge i -20 til 125 C.
+Elektriske thresholds svarer omtrent til 50-200 ohm og supplerer
+softwaregraenserne. Foerste registrerede fejl goer straks maalevaerdien
+ugyldig (NAN); den tidligere gyldige vaerdi bruges ikke som reserve til gas.
+Data bliver ogsaa ugyldige, naar alderen er over fem sekunder. En central
+interlock lukker gas ved naeste sikkerhedskontrol i ALLE proces- og manuelle
+tilstande. Alle indkoblingsveje kontrollerer begge sensorers sundhed.
+Geninitialisering sker ved hver tredje fejl, ogsaa efter at fejltaelleren
+har naaet 255. Firmwaredefault for pumpe/gas/buzzer saettes LOW tidligt i boot;
+eksterne pulldowns er fortsat noedvendige under reset.
+
+Manuel gas forbliver slukket efter recovery, indtil den taendes igen.
+En aktiv automatisk proces kan genoptage varmen, naar begge sensorer igen
+er gyldige; fejl er ikke laast til operatoerkvittering. Pumpens eksisterende
+procespolitik er bevaret. Loekkens netvaerkskald kan stadig forsinke fysisk
+reaktion, saa den maksimale afbrydelsestid skal maales paa hardwaren.
+
+Kalibrering af begge PT100 kan indtastes via System -> Temperaturkalibrering.
+Se [kalibreringsvejledningen](pt100-calibration.md) for metode, graenser,
+flashlagring og nulstilling. Kalibrering aendrer ingen fysiske forbindelser.
 
 Foer PCB frigives eller gas tilsluttes, testes begge kanaler med ufarlige
 dummybelastninger paa udgangene:
@@ -209,7 +299,8 @@ dummybelastninger paa udgangene:
    normal maaling; den tidligere digitale sensors opstartsvaerdi er ikke relevant.
 4. Afbryd hver af de tre sensorledninger enkeltvis, kortslut sensoren, og
    afbryd et MAX31865-modul. Verificer fejlstatus, maalingens alder og gas-OFF
-   efter udloeb af gyldighedstiden, og test efterfoelgende recovery.
+   ved foerste registrerede fejl samt ved udloeb af gyldighedstiden. Gentag
+   i IDLE/PAUSED med manuel gas og i alle automatiske faser. Test recovery.
 5. Test under pumpe-/ventilskift, WiFi og OTA samt ved realistiske kabellaengder.
    Kontroller temperaturafvigelse, stoeg og fejlreaktion med en referencemaaler.
 

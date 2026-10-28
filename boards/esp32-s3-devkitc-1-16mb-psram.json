@@ -40,7 +40,7 @@
     "arduino",
     "espidf"
   ],
-  "name": "Espressif ESP32-S3-DevKitC-1-N8R8 (16 MB flash, 8 MB PSRAM)",
+  "name": "ESP32-S3-DevKitC-1-N16R8 (16 MB QIO flash, 8 MB OPI PSRAM)",
   "upload": {
     "flash_size": "16MB",
     "maximum_ram_size": 327680,

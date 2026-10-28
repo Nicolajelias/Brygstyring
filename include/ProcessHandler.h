@@ -13,6 +13,7 @@ public:
   // Initiering og opdatering
   static void begin(uint8_t gasP, uint8_t pumpP, uint8_t buzzerP, uint8_t buttonP);
   static void update(float tGryde, float tVentil);
+  static void enforceTemperatureSafety();
   static String getProcessStep();
 
   // Start/stop for de enkelte trin

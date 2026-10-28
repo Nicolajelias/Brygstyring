@@ -372,6 +372,11 @@ void WebServerHandler::handleSaveSettings() {
 
 void WebServerHandler::handleResetSettings() {
   if (rejectDuringOTA()) return;
+  ProcessHandler::stopProcess();
+  if (!TemperatureHandler::saveCalibration(TemperatureCalibration{}, TemperatureCalibration{})) {
+    server.send(500, "text/plain; charset=utf-8", "Kalibrering kunne ikke nulstilles i flash; prøv igen");
+    return;
+  }
   EEPROMHandler::resetToDefaults();
   server.send(200, "text/plain; charset=utf-8", "Indstillinger nulstillet; genstarter");
   delay(500);
@@ -390,13 +395,16 @@ void WebServerHandler::handleSettings() {
   html += SOFTWARE_VERSION;
   html += F(" · build "); html += FIRMWARE_INFO.buildNumber;
   html += F(" · git "); html += FIRMWARE_INFO.gitHash;
-  html += F("</p></section></body></html>");
+  html += F("</p></section><section><h2>Temperaturkalibrering</h2><a class='link' href='/calibration'>Kalibrér de to PT100-sensorer</a><p>Separat ét- eller topunktskalibrering af gryde og ventil.</p></section></body></html>");
   server.send(200, "text/html; charset=utf-8", html);
 }
 
 void WebServerHandler::begin() {
   server.on("/", HTTP_GET, handleRoot);
   server.on("/settings", HTTP_GET, handleSettings);
+  server.on("/calibration", HTTP_GET, handleCalibrationPage);
+  server.on("/api/calibration", HTTP_GET, handleCalibrationData);
+  server.on("/api/calibration", HTTP_POST, handleSaveCalibration);
   server.on("/recipes", HTTP_GET, handleRecipesPage);
   server.on("/api/recipes", HTTP_GET, handleRecipesList);
   server.on("/api/recipes/item", HTTP_GET, handleRecipeItem);

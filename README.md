@@ -4,6 +4,8 @@ Brygstyring er en ESP32-S3-baseret brygkontroller, der overvåger og styrer mæs
 
 ## Funktioner
 - Robust, ikke-blokerende temperaturovervågning med to 3-leder PT100-sensorer, fælles SPI-bus, 50 Hz-filter, friskhedskontrol og automatisk geninitialisering ved fejl.
+- Separat ét- eller topunktskalibrering af begge PT100 via **System → Temperaturkalibrering** (`/calibration`), gemt permanent i flash. Se [vejledningen](docs/pt100-calibration.md).
+- Gasinterlock i både manuel og automatisk drift: registrerede sensorfejl og for gamle målinger spærrer gas.
 - Relækontrol for pumpe og gasventil samt buzzer-alarmer og knap-input til brugerbekræftelser.
 - 128×64 I²C OLED-display med processtatus, tider og temperaturer.
 - Indbygget webserver med status-dashboard, proceskontrol og indstillingsside.
@@ -14,14 +16,16 @@ Brygstyring er en ESP32-S3-baseret brygkontroller, der overvåger og styrer mæs
 - Loginbeskyttet og valideret OTA-firmwareopdatering (`/update`) med rollback.
 
 ## Hardware
-- `ESP32-S3-DevKitC-1` (projektets build er konfigureret til 16 MB flash og 8 MB OPI PSRAM).
+- `ESP32-S3-DevKitC-1-N16R8` (bekræftet hardware: 16 MB flash og 8 MB OPI PSRAM).
 - 2 × PT100 temperatursensor, 3-leder, IEC 60751 (100 ohm ved 0 °C).
 - 2 × MAX31865 til PT100, hver med 430 ohm præcisionsreference og korrekt 3-lederforbindelse.
 - Relæmodul til pumpe (230 V) og gasventil (sørg for galvanisk isolation).
-- Aktiv buzzer.
+- Passiv buzzer/transducer med passende driver til firmwarens 750 Hz tone.
 - Momentary-knap (benyttes til bekræftelser/start).
 - SSD1306 128×64 OLED (I²C).
 - Adresserbar RGB status-LED med GPIO48 data. Separat strøm-enable er deaktiveret i den aktuelle pin-konfiguration.
+
+LED-data vælges med `-DBRYG_RGB_LED_GPIO=48` i `platformio.ini`; brug `38` til onboard-LED på officiel DevKitC-1 revision 1.1. Boardrevisionen er endnu ikke bekræftet. Sensorernes SPI-pins er uændrede.
 
 | Komponent          | GPIO (ESP32-S3) | Makro i `PinConfig.h` |
 |--------------------|-----------------|------------------------|

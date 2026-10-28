@@ -25,6 +25,12 @@ unsigned long buttonPressStart = 0;
 bool longPressHandled = false;
 
 void setup() {
+  digitalWrite(PIN_GAS, LOW);
+  digitalWrite(PIN_PUMP, LOW);
+  digitalWrite(PIN_BUZZER, LOW);
+  pinMode(PIN_GAS, OUTPUT);
+  pinMode(PIN_PUMP, OUTPUT);
+  pinMode(PIN_BUZZER, OUTPUT);
   Serial.begin(115200);
   Serial.println();
   Serial.println("==== Opstart af Brygkontroller (HTTP-OTA) ====");
@@ -32,13 +38,9 @@ void setup() {
   EEPROMHandler::begin();
   RecipeManager::begin();
   StatusLED::begin(PIN_RGB_LED);
-  pinMode(PIN_GAS, OUTPUT);
-  pinMode(PIN_PUMP, OUTPUT);
-  pinMode(PIN_BUZZER, OUTPUT);
   pinMode(PIN_BUTTON, INPUT);
 
   WiFiHandler::begin();
-  TemperatureHandler::begin(PIN_TEMP_GRYDE, PIN_TEMP_VENTIL);
   ProcessHandler::begin(PIN_GAS, PIN_PUMP, PIN_BUZZER, PIN_BUTTON);
   RecipeManager::restoreActive();
   OTAHandler::begin();
@@ -56,15 +58,20 @@ void setup() {
   }
   delay(5000);
   Serial.println("==== Opstart gennemført ====");
+  // Start acquisition after the blocking startup screens, so bias is not held on.
+  TemperatureHandler::begin(PIN_TEMP_GRYDE, PIN_TEMP_VENTIL);
 }
 
 void loop() {
+  TemperatureHandler::readTemperatures();
+  ProcessHandler::enforceTemperatureSafety();
   WebServerHandler::handleClient();
   WiFiHandler::handleWiFi();
 
   unsigned long now = millis();
   OTAHandler::update(now);
   TemperatureHandler::readTemperatures();
+  ProcessHandler::enforceTemperatureSafety();
   const bool isGrydeValid = TemperatureHandler::isGrydeValid();
   const bool isVentilValid = TemperatureHandler::isVentilValid();
   const float tGryde = TemperatureHandler::getGrydeTemp();

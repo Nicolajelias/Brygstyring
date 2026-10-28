@@ -13,6 +13,9 @@ public:
     // Routes
     static void handleRoot();
     static void handleSettings();
+    static void handleCalibrationPage();
+    static void handleCalibrationData();
+    static void handleSaveCalibration();
     static void handleSaveSettings();
     static void handleResetSettings();
     static void handleStatus();
