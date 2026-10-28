@@ -14,9 +14,19 @@ der skal monteres sammen med modulerne.
 
 Pull-up-praecisering: De tre `103`-modstande paa modulbilledet matcher
 referencedesignets 10 kohm pull-ups paa SDI/CS/SCLK. For de valgte moduler
-er ekstra CS-pull-ups derfor valgfri bestykningsplads, normalt umonteret;
+udelades carrier-PCB'ets ekstra CS-pull-ups R1/R2;
 indbygget CS-HIGH under reset skal bekraeftes paa de leverede moduler.
 De historiske krav til egne CS-modstande nedenfor vedroerer loese chips.
+
+**Brugerbekræftet relætest og bestykning:** De valgte relæmoduler fungerer
+med ESP32's 3,3 V-styring, både med og uden tilsluttet gasventil og pumpe.
+Begge bruger jumper H og 5 V-forsyning; R4/R5-pulldowns udelades.
+MAX31865 og OLED bruger modulernes indbyggede pull-ups, så carrier-PCB'ets
+R1/R2 og R7/R8 udelades. R3 (knap-pull-up) og R6 (buzzer-driver-pulldown)
+beholdes på 10 kohm. Se [den aktuelle bestykning](hardware-pt100.md#bekraeftet-bestykning-og-relaetest).
+Dette erstatter de generelle modstandsanbefalinger i den historiske gennemgang.
+Brugerens funktionstest dokumenterer ikke særskilt reset-/strømudfaldsadfærd,
+sensorfejlreaktion eller EMC; de punkter er fortsat åbne i hardwaretestplanen.
 
 Opdateret 28. oktober 2026. F1-F4 er rettet i koden og testet med simuleret
 SPI/MAX31865, flash og GPIO samt de faktiske temperatur-, proces- og

@@ -5,8 +5,9 @@
 > netforbindelser er kontrolleret mod databladet, og firmwarebuildet lykkes.
 > Firmwarefund F1-F4 er nu rettet og regressionstestet med simulerede perifere
 > enheder. N16R8 er bekraeftet af brugeren. Se den aktuelle firmwarebeskrivelse
-> nedenfor og [kalibreringsvejledningen](pt100-calibration.md). Fysisk
-> validering paa PCB og sensorer er fortsat ikke udfoert.
+> nedenfor og [kalibreringsvejledningen](pt100-calibration.md). Brugeren har
+> bekraeftet funktion af relaemodulerne med 3.3 V-styring, baade med og uden
+> tilsluttet gasventil og pumpe. Oevrig PCB-/sensorvalidering er fortsat aaben.
 
 ## Forudsaetninger
 
@@ -20,12 +21,32 @@ headerben eller ESP32-modulben. Kontroller footprint og headerplacering mod
 netop dit DevKit. Et PCB med et loest ESP32-S3-WROOM-modul kraever desuden
 modulets eget referencedesign for forsyning, EN/reset, boot, USB og antenne.
 
+## Bekraeftet bestykning og relaetest
+
+Brugeren har testet de valgte 5 V-relaemoduler med 3.3 V-styring fra ESP32,
+baade med og uden tilsluttet gasventil og pumpe, og bekraefter, at de fungerer.
+Begge moduler bruges med jumper paa **H**, 5 V-forsyning og uden ekstra
+R4/R5-pulldowns. Denne funktionsbekraeftelse gaelder de afproevede moduler.
+
+| Carrier-PCB-reference | Funktion | Bestykning |
+| --- | --- | --- |
+| R1/R2 | MAX31865 CS-pull-ups | Udelades; brug modulernes indbyggede pull-ups. |
+| R3 | Knap-pull-up | Behold 10 kohm mellem GPIO15 og 3.3 V. |
+| R4/R5 | Gas-/pumperelae-pulldowns | Udelades; relaemodulerne bruges i H-tilstand. |
+| R6 | Buzzer-driver-pulldown | Behold 10 kohm mellem driverens styreindgang og GND. |
+| R7/R8 | OLED SDA/SCL-pull-ups | Udelades; brug OLED-modulets indbyggede pull-ups til 3.3 V. |
+
+R1-R8 ovenfor er carrier-PCB'ets referencer, ikke komponentnumrene paa
+modulerne eller i Adafruits referenceskema. Testmeldingen dokumenterer
+normal relaeaktivering med og uden belastning; reset-/stroemudfaldstest og
+sensorfejltest er fortsat separate punkter i idriftsaettelsesplanen.
+
 ## Samlet GPIO-plan
 
 | ESP32-S3 | Forbindelse | Retning set fra ESP32 | Bemaerkning |
 | --- | --- | --- | --- |
-| GPIO4 | MAX31865 gryde CS | Ud | Aktiv LOW; se modulafsnittet om indbygget/valgfri pull-up |
-| GPIO5 | MAX31865 ventil CS | Ud | Aktiv LOW; se modulafsnittet om indbygget/valgfri pull-up |
+| GPIO4 | MAX31865 gryde CS | Ud | Aktiv LOW; indbygget pull-up, R1/R2 udelades |
+| GPIO5 | MAX31865 ventil CS | Ud | Aktiv LOW; indbygget pull-up, R1/R2 udelades |
 | GPIO12 | Begge MAX31865 SCLK/SCK | Ud | Faelles SPI-clock |
 | GPIO13 | Begge MAX31865 SDI/MOSI | Ud | ESP32 sender data |
 | GPIO14 | Begge MAX31865 SDO/MISO | Ind | MAX31865 sender data; kun valgt chip driver |
@@ -79,24 +100,25 @@ skal kontrolleres mod komponent-/monteringssiden, saa footprintet ikke spejles.
 | CLK | GPIO12 | GPIO12 |
 | SDO | GPIO14 (MISO) | GPIO14 (MISO) |
 | SDI | GPIO13 (MOSI) | GPIO13 (MOSI) |
-| CS | GPIO4; ekstern 10 kohm er valgfri, normalt ikke monteret | GPIO5; ekstern 10 kohm er valgfri, normalt ikke monteret |
+| CS | GPIO4; indbygget pull-up, ingen ekstra carrier-modstand | GPIO5; indbygget pull-up, ingen ekstra carrier-modstand |
 | DRDY | Separat testpunkt eller uforbundet | Separat testpunkt eller uforbundet |
 
 ### Pull-ups paa modulet
 
 Komponentsiden viser tre modstande maerket `103` (= 10 kohm) ved
 SPI-indgangenes diodekredsloeb. Dette matcher Adafruits referencedesign,
-hvor R6/R7/R8 traekker henholdsvis SDI/CS/SCLK paa chipsiden op til
+hvor referenceskemaets R6/R7/R8 traekker henholdsvis SDI/CS/SCLK paa chipsiden op til
 modulets regulerede 3.3 V. Derfor forventes det viste modul allerede at
 have de noedvendige pull-ups. Fotoet identificerer komponenterne og
 layoutligheden, men erstatter ikke et skema/maalekontrol af klonen.
 Se [Adafruits referenceskema](https://github.com/adafruit/Adafruit-MAX31865-PCB/blob/master/Adafruit%20MAX31865.sch).
 
-Der skal normalt ikke monteres ekstra pull-ups til dette breakout-modul:
+Den valgte bestykning bruger breakout-modulets indbyggede pull-ups;
+carrier-PCB'ets R1/R2 udelades:
 
 | Signal | Ekstern pull-up paa carrier-PCB |
 | --- | --- |
-| CS, en pr. modul | Normalt unoedvendig. Reserver evt. plads til 10 kohm til ESP32 3V3; lad den umonteret ved bekraeftet indbygget pull-up. |
+| CS, en pr. modul | Ingen ekstra; R1/R2 udelades. |
 | CLK og SDI | Ingen ekstra modstand noedvendig. |
 | SDO/MISO | Ingen paakraevet pull-up; dette er SPI, ikke I2C. |
 | DRDY/RDY | Ingen; push-pull-udgang, aktuelt ubrugt. |
@@ -271,13 +293,17 @@ og verificeres for maaleafvigelse. De gamle 4.7 kohm OneWire-pull-ups fjernes.
 
 - OLED: VCC til 3.3 V, GND til GND, SDA til GPIO8, SCL til GPIO9.
   Firmwaren bruger SSD1306 128x64 med I2C-adresse 0x3C.
-  Brug normalt 4.7 kohm pull-ups fra SDA/SCL til 3.3 V, medmindre modulet
-  allerede har passende pull-ups. Ingen I2C pull-ups til 5 V.
+  Brug modulets indbyggede pull-ups fra SDA/SCL til 3.3 V; R7/R8 udelades.
+  Ingen I2C pull-ups til 5 V.
 - Knap: normalt aaben kontakt mellem GPIO15 og GND. Firmware aktiverer intern
-  pull-up; ekstern 10 kohm til 3.3 V anbefales paa et PCB med ekstern knap.
-- Pumpe: GPIO18 til et 3.3 V kompatibelt, aktiv-HIGH drivertrin/relaeinterface.
-- Gasventil: GPIO17 til et 3.3 V kompatibelt, aktiv-HIGH drivertrin/relaeinterface.
+  pull-up; behold ogsaa R3 paa 10 kohm fra GPIO15 til 3.3 V.
+- Pumpe: GPIO18 direkte til IN paa det afproevede relaemodul; jumper H.
+- Gasventil: GPIO17 direkte til IN paa det afproevede relaemodul; jumper H.
+  Begge relaemoduler: DC+ til 5 V, DC- til faelles logik-GND. HIGH = ON,
+  LOW = OFF. 3.3 V-styring er bekraeftet ved brugerens funktionstest;
+  R4/R5 udelades.
 - Buzzer: GPIO21 til passende drivertrin; firmwaren sender 750 Hz PWM.
+  Behold R6 paa 10 kohm mellem driverens styreindgang og GND.
   En passiv buzzer/transducer passer til tonestyringen; en aktiv buzzers lyd
   med denne PWM afhaenger af typen. Belast ikke GPIO direkte med en effektbuzzer.
 - RGB: GPIO48 til DIN paa en adresserbar LED. Brug passende forsyning,
@@ -289,10 +315,10 @@ og verificeres for maaleafvigelse. De gamle 4.7 kohm OneWire-pull-ups fjernes.
   controller, WiFi-spidser, display og LED; relaespoler forsynes separat efter
   deres maerkedata. ESP32 GPIO er ikke 5 V-tolerante.
 
-Pumpe- og gasudgange skal have ekstern hardware-default OFF, f.eks. 10 kohm
-pulldown paa et aktiv-HIGH driverinput. Brug passende transistor/MOSFET eller
-isoleret interface, og friloebs-/transientbeskyttelse til DC-spoler efter
-aktuatorens krav til afbrydelsestid. Ingen spoler eller ventiler direkte paa GPIO.
+De valgte pumpe- og gasrelaemoduler bruges uden eksterne R4/R5-pulldowns.
+Modulernes hardware-default OFF skal indgaa i reset-/stroemudfaldstesten.
+Brug friloebs-/transientbeskyttelse til DC-spoler efter aktuatorens krav til
+afbrydelsestid. Ingen spoler eller ventiler direkte paa GPIO.
 Ved galvanisk isolation maa lastsidens stel ikke kortsluttes til logikstel.
 
 230 V og gas kraever et selvstaendigt, fagligt kontrolleret sikkerhedsdesign:
@@ -329,8 +355,8 @@ Data bliver ogsaa ugyldige, naar alderen er over fem sekunder. En central
 interlock lukker gas ved naeste sikkerhedskontrol i ALLE proces- og manuelle
 tilstande. Alle indkoblingsveje kontrollerer begge sensorers sundhed.
 Geninitialisering sker ved hver tredje fejl, ogsaa efter at fejltaelleren
-har naaet 255. Firmwaredefault for pumpe/gas/buzzer saettes LOW tidligt i boot;
-eksterne pulldowns er fortsat noedvendige under reset.
+har naaet 255. Firmwaredefault for pumpe/gas/buzzer saettes LOW tidligt i boot.
+Relaemodulerne bruges uden R4/R5; buzzer-driverens R6-pulldown beholdes.
 
 Manuel gas forbliver slukket efter recovery, indtil den taendes igen.
 En aktiv automatisk proces kan genoptage varmen, naar begge sensorer igen
@@ -358,8 +384,10 @@ dummybelastninger paa udgangene:
 5. Test under pumpe-/ventilskift, WiFi og OTA samt ved realistiske kabellaengder.
    Kontroller temperaturafvigelse, stoeg og fejlreaktion med en referencemaaler.
 
-Firmwarebuild er kontrolleret med PlatformIO. Fysisk maalenoejagtighed,
-ledningsfejl, EMC og udgangenes sikkerhed er ikke verificeret paa hardware her.
+Firmwarebuild er kontrolleret med PlatformIO. Brugeren har bekraeftet
+relaefunktion med 3.3 V-styring, baade med og uden tilsluttet gasventil og pumpe.
+Fysisk maalenoejagtighed, ledningsfejl, EMC og udgangenes sikkerhed under
+reset/stroemudfald er ikke dokumenteret ved denne funktionstest.
 
 ## Referencer
 
