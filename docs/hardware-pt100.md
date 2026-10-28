@@ -57,9 +57,13 @@ og svarer til 16 MB QIO flash og 8 MB OPI PSRAM.
 
 Brugeren har valgt det lilla breakout-modul med teksten "MAX31865 2/3/4 Wire
 Platinum RTD Converter", "Vin: 3-5VDC" og "Vlogic: 3-5VDC". Carrier-PCB'et
-planlaegges med to af disse moduler, et pr. PT100. Fotoet viser undersiden;
-producent, modulrevision, referencemodstand og loddejumpere kan ikke
-fastslaas ud fra denne side alene.
+planlaegges med to af disse moduler, et pr. PT100. Brugeren har nu vist baade
+under- og komponentsiden. Paa komponentsiden ses jumperne "2/3 Wire",
+"2 Wire" og en trepad-vaelger maerket "24" og "3" over Rref.
+Rref-maerkningen ser ud til at vaere `431`, dvs. 430 ohm efter den
+almindelige trecifrede modstandskode. Det stemmer med PT100-firmwaren;
+komponenttolerance og faktisk modstandsvaerdi er ikke maalt ud fra fotoet.
+Producent og praecis modulrevision er fortsat ikke dokumenteret.
 
 Benraekken er, laest fra VIN-enden mod DRDY-enden paa billedet:
 `VIN - GND - 3V3 - CLK - SDO - SDI - CS - DRDY`.
@@ -97,18 +101,41 @@ Til hver 3-leder PT100 anvendes:
 | RTD- | Enkelt leder fra modsatte ende |
 | F- | Forbindes lokalt til RTD- via korrekt jumper eller kort bro |
 
-Derudover skal modulets interne FORCE2 forbindes til FORCE+ gennem dets
-3-ledervalg. FORCE2 er ikke et separat ben i den viste header. Praecise
-lodde-/skaerepunkter kan foerst angives efter kontrol af komponentsiden
-eller et skema for netop dette modul; foelg ikke automatisk Adafruits
-jumperplacering paa et ukendt modul.
+### Jumpere paa det viste modul til 3-leder PT100
+
+Udfoer dette paa begge moduler uden forsyning og med sensoren afbrudt.
+Placeringerne nedenfor henviser til komponentsiden med sensorhullerne
+oeverst og VIN/GND/SPI-headeren nederst:
+
+| Synlig jumper | Placering | Faerdig indstilling til 3-leder |
+| --- | --- | --- |
+| `2/3 Wire` | Under sensorhullerne ved F-/RTD-, til venstre paa fotoet | Luk de to pads med en loddebro. Det forbinder F- og RTD-. |
+| `2 Wire` | Under sensorhullerne ved F+/RTD+, til hoejre paa fotoet | Lad den vaere aaben. F+ og RTD+ skal have hver sin sensorleder. |
+| `24` / `3` | Tre pads lige over Rref | Fjern en eventuel fabriksbro mellem midterpad og `24`-siden. Lod midterpad til `3`-siden. |
+
+Ved trepad-vaelgeren maa midterpad ikke vaere forbundet til begge sider.
+Hvis fabriksbroen er en kobberbane, skal den brydes; er det loddetin,
+fjernes tinnet. Kontroller med multimeter, hvilken forbindelse der faktisk
+er til stede, foer du aendrer noget. Fotoet alene beviser ikke, om en tynd
+fabriksbro allerede er afbrudt.
+
+Jumperplacering og maerkning svarer til den viste
+[Adafruit-konfiguration for tre ledere](https://learn.adafruit.com/adafruit-max31865-rtd-pt100-amplifier/pinouts).
+Den tilsigtede elektriske forbindelse er FORCE2 til FORCE+, ikke til GND.
+FORCE2 er ikke et separat ben i den eksterne header. Efter aendringen
+kontrolleres kontinuitet paa det faktiske modul: F- til RTD- skal vaere
+kortsluttet, F+ til RTD+ maa ikke vaere kortsluttet, og vaelgerens midterpad
+skal kun vaere kortsluttet til `3`-siden. En loddebro mellem alle tre
+vaelgerpads er forkert. Foretag kontrollen uden sensor, da lederparret
+ellers kan ligne en utilsigtet bro mellem F+ og RTD+.
 
 Kontroller disse punkter inden footprint og BOM laases:
 
 - PT100-udgaven skal have Rref = 430 ohm til den aktuelle firmware.
-  Almindelig firecifret modstandsmaerkning `4300` betyder 430 ohm;
-  `4301` betyder 4.3 kohm og er ikke den valgte PT100-konfiguration.
-  Maerket MAX31865 alene identificerer ikke referencevaerdien.
+  Den fotograferede maerkning laeses som `431` (43 x 10 = 430 ohm).
+  Andre mulige maerkninger er `4300` = 430 ohm, mens `432` og `4301`
+  betyder 4.3 kohm. Kontroller de faktisk leverede moduler; et produktfoto
+  dokumenterer ikke komponenttolerance eller maalenoejagtighed.
 - 3-lederkonfiguration kontrolleres paa hvert modul: FORCE2 til FORCE+,
   RTD- til F-, og ingen bro mellem F+ og RTD+. Kontroller uden tilsluttet
   sensor og uden spaending, da sensorens lederpar ellers kan ligne en bro.

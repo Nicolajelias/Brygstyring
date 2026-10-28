@@ -5,8 +5,10 @@
 **Modulvalg:** Brugeren har efterfølgende vist et lilla MAX31865-breakout
 med VIN/GND/3V3/CLK/SDO/SDI/CS/DRDY. Carrier-PCB'et planlægges nu med to
 af disse moduler. [Hardwaredokumentet](hardware-pt100.md) indeholder den
-tilpassede forbindelsesoversigt. Referenceværdi, jumpere og mekaniske mål
-er endnu ikke verificeret; billedet viser kun undersiden. Den tidligere
+tilpassede forbindelsesoversigt. Begge sider er nu vist: Rref læses som
+`431` (430 ohm), og jumperplaceringerne til 3-lederdrift er beskrevet.
+Dette er en visuel identifikation; faktisk komponentværdi/tolerance,
+elektrisk jumperkontinuitet og mekaniske mål er endnu ikke målt. Den tidligere
 netliste til løse MAX31865-chips er et alternativ, ikke ekstra komponenter
 der skal monteres sammen med modulerne.
 
