@@ -9,6 +9,7 @@
 #include <string>
 #include <type_traits>
 using std::min;
+using std::max;
 using std::isfinite;
 constexpr int HIGH = 1, LOW = 0, OUTPUT = 1, INPUT_PULLUP = 2;
 #define PROGMEM
@@ -25,6 +26,7 @@ struct String : std::string {
   long toInt() const { return std::strtol(c_str(), nullptr, 10); }
 };
 struct SerialMock {
+  template<class T> void print(const T&) {}
   template<class T> void println(const T&) {}
   template<class... T> void printf(const char*, T...) {}
 };
@@ -35,7 +37,7 @@ inline unsigned long millis() { return mockNow; }
 inline void delay(unsigned long ms) { mockNow += ms; }
 inline void pinMode(int, int) {}
 void digitalWrite(int pin, int level);
-inline int digitalRead(int pin) { return mockPins[pin]; }
+int digitalRead(int pin);
 inline void ledcWrite(int, int) {}
 inline void ledcWriteTone(int, int) {}
 inline void ledcSetup(int, int, int) {}

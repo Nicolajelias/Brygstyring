@@ -1,3 +1,4 @@
+#include "ControlRuntime.h"
 #include "OTAHandler.h"
 
 #include <Preferences.h>
@@ -22,6 +23,8 @@ uint32_t healthyLoopCount = 0;
 uint8_t authenticationFailures = 0;
 bool requestAuthenticated = false;
 bool uploadStarted = false;
+bool ownsMaintenance = false;
+bool resultDirty = false;
 bool uploadFinished = false;
 size_t expectedUploadSize = 0;
 uint8_t imageHeader[sizeof(esp_image_header_t)] = {};
@@ -42,7 +45,8 @@ form.addEventListener('submit',event=>{event.preventDefault();if(!file.files.len
 
 void persistResult(const String& result) {
   status.lastResult = result;
-  preferences.putString(RESULT_KEY, result);
+  resultDirty = true;
+  if (ownsMaintenance) { preferences.putString(RESULT_KEY, result); resultDirty = false; }
 }
 
 void fail(const String& message) {
@@ -51,6 +55,7 @@ void fail(const String& message) {
   uploadFinished = false;
   if (Update.isRunning()) Update.abort();
   persistResult("failed:" + message);
+  if (ownsMaintenance) { ControlRuntime::leaveMaintenance(); ownsMaintenance = false; }
   Serial.printf("[OTA] Fejl: %s\n", message.c_str());
 }
 
@@ -118,10 +123,11 @@ void handleUpload() {
     imageHeaderValidated = false;
     requestAuthenticated = authenticate();
     if (!requestAuthenticated) return;
-    if (!processIsSafe()) {
+    if (ownsMaintenance || !ControlRuntime::enterMaintenance()) {
       fail("Brygprocessen skal være stoppet, og pumpe/gas skal være slukket");
       return;
     }
+    ownsMaintenance = true;
     const esp_partition_t* target = esp_ota_get_next_update_partition(nullptr);
     if (!target) {
       fail("Ingen ledig OTA-partition fundet");
@@ -226,9 +232,14 @@ void OTAHandler::registerRoutes(WebServer& server) {
 
 void OTAHandler::update(unsigned long now) {
   ++healthyLoopCount;
+  if (resultDirty && !ownsMaintenance) {
+    ControlRuntime::Maintenance safe;
+    if (safe) { preferences.putString(RESULT_KEY, status.lastResult); resultDirty = false; }
+  }
   if (OtaPolicy::bootValidationReady(status.pendingBootValidation, now - bootStartedAt,
                                      healthyLoopCount, ESP.getFreeHeap())) {
-    if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
+    ControlRuntime::Maintenance safe;
+    if (safe && esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
       status.pendingBootValidation = false;
       persistResult("boot_validated:" + String(FIRMWARE_INFO.version));
       Serial.println("[OTA] Ny firmware markeret som stabil");

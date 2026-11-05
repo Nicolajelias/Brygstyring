@@ -50,6 +50,8 @@ sensorfejltest er fortsat separate punkter i idriftsaettelsesplanen.
 | GPIO12 | Begge MAX31865 SCLK/SCK | Ud | Faelles SPI-clock |
 | GPIO13 | Begge MAX31865 SDI/MOSI | Ud | ESP32 sender data |
 | GPIO14 | Begge MAX31865 SDO/MISO | Ind | MAX31865 sender data; kun valgt chip driver |
+| GPIO6 | Gryde-MAX31865 DRDY/RDY | Ind | Faerdigmelding, aktiv LOW |
+| GPIO7 | Ventil-MAX31865 DRDY/RDY | Ind | Faerdigmelding, aktiv LOW |
 | GPIO18 | Pumpe-driver IN | Ud | HIGH = ON, LOW = OFF |
 | GPIO17 | Gasventil-driver IN | Ud | HIGH = ON, LOW = OFF |
 | GPIO21 | Buzzer-driver IN | Ud | Firmware bruger 750 Hz PWM |
@@ -60,13 +62,11 @@ sensorfejltest er fortsat separate punkter i idriftsaettelsesplanen.
 | 3V3 | MAX31865-forsyning og 3.3 V OLED | Forsyning | Kun lavspaendingsdelen |
 | GND | Faelles logik-/sensorinterface-GND | Stel | Ikke PT100-sensorledningerne |
 
-MAX31865 DRDY/RDY bruges ikke; lad udgangen vaere uforbundet eller foer den
-til et separat testpunkt pr. kanal. DRDY er push-pull; udgangene maa ikke
-kortsluttes mellem kanalerne. GPIO38 bruges ikke som LED-stroemstyring i denne firmware
-(`PIN_RGB_LED_PWR = -1`). Behold GPIO19/20 til native USB og GPIO43/44 til
-UART, hvis disse interfaces skal bruges. Undgaa boot-strapping GPIO0/3/45/46
-til ekstra belastninger. Flash-/PSRAM-pins afhaenger af modulvarianten;
-GPIO35/36/37 skal bl.a. reserveres ved den aktuelle OPI PSRAM-konfiguration.
+MAX31865 DRDY/RDY forbindes separat: gryde til GPIO6, ventil til GPIO7.
+Brugeren har tilfoejet forbindelserne. DRDY er en 3.3 V push-pull-udgang;
+de to udgange maa ikke forbindes sammen. Ingen ekstern pull-up er noedvendig.
+Firmwaren aktiverer ESP32's svage interne pull-up, saa en afbrudt leder
+giver HIGH og dermed timeout i stedet for en svaevende faerdigmelding.
 
 GPIO48 til onboard-RGB passer til det oprindelige officielle DevKitC-1.
 Officiel revision 1.1 bruger GPIO38 som RGB-data. Vaelg 48 eller 38 med
@@ -101,7 +101,7 @@ skal kontrolleres mod komponent-/monteringssiden, saa footprintet ikke spejles.
 | SDO | GPIO14 (MISO) | GPIO14 (MISO) |
 | SDI | GPIO13 (MOSI) | GPIO13 (MOSI) |
 | CS | GPIO4; indbygget pull-up, ingen ekstra carrier-modstand | GPIO5; indbygget pull-up, ingen ekstra carrier-modstand |
-| DRDY | Separat testpunkt eller uforbundet | Separat testpunkt eller uforbundet |
+| DRDY/RDY | GPIO6 | GPIO7 |
 
 ### Pull-ups paa modulet
 
@@ -121,7 +121,7 @@ carrier-PCB'ets R1/R2 udelades:
 | CS, en pr. modul | Ingen ekstra; R1/R2 udelades. |
 | CLK og SDI | Ingen ekstra modstand noedvendig. |
 | SDO/MISO | Ingen paakraevet pull-up; dette er SPI, ikke I2C. |
-| DRDY/RDY | Ingen; push-pull-udgang, aktuelt ubrugt. |
+| DRDY/RDY | Ingen ekstern; push-pull til GPIO6/7. Firmware aktiverer intern pull-up. |
 | F+, RTD+, RTD-, F- | Ingen pull-ups til forsyning. |
 
 Foer frigivelse kontrolleres, at MAX31865-chipben CS er HIGH under ESP32-reset
@@ -208,7 +208,7 @@ den elektriske kompatibilitet er betinget af de naevnte komponentkontroller.
 | SDI/MOSI | GPIO13 | GPIO13 |
 | SDO/MISO | GPIO14 | GPIO14 |
 | CS | GPIO4 | GPIO5 |
-| DRDY/RDY | Ikke tilsluttet | Ikke tilsluttet |
+| DRDY/RDY | GPIO6 | GPIO7 |
 
 Paa Adafruit-modulet forbindes 3.3 V til VIN, ikke til 3Vo-udgangen.
 Klonmoduler kan have andre regulatorer og pinnavne; kontroller deres skema.
@@ -268,7 +268,7 @@ kapslinger. Gentag hele kredsloebet en gang pr. sensor.
 | 15 | DGND | GND |
 | 16 | GND1 | GND |
 | 17 | N.C. | Ikke tilsluttet |
-| 18 | DRDY | Ikke tilsluttet/testpunkt |
+| 18 | DRDY | GPIO6 (gryde) eller GPIO7 (ventil), separate signaler |
 | 19 | DVDD | 3.3 V; 100 nF til GND taet ved benet |
 | 20 | VDD | Ren 3.3 V; 100 nF til GND taet ved benet |
 | Exposed pad | EP | GND, med korrekt termisk land pattern |
@@ -339,11 +339,22 @@ kontrol af afslutning og fault-status, og 12 ms settling efter lukning.
 Dette er dimensioneret til det beskrevne 100 nF PT100-filter; vaesentligt
 andre filtre/kabler kraever ny kontrol af RC-tiderne.
 
-One-shot-kommandoens 1SHOT-bit skal kunne aflaeses sat umiddelbart efter
-start. Resultatet accepteres tidligst efter 70 ms, med 1SHOT nulstillet og
+One-shot-kommandoens 1SHOT-bit er selvnulstillende og kraeves ikke aflaest
+som 1 efter start. Resultatet accepteres tidligst efter 70 ms, med 1SHOT nulstillet og
 de oevrige konfigurationsbits intakte. Et stadig sat 1SHOT-bit giver fejl
 ved 110 ms; en haengende fault-cyklus giver fejl ved 20 ms. Fristerne
 kontrolleres ved naeste service af loekken. Bias slukkes efter maaling/fejl.
+Hver ny konvertering kraever et komplet DRDY-forloeb: den gamle RTD-vaerdi
+laeses og kasseres, og DRDY skal vaere HIGH foer start. Efter mindst 70 ms
+skal DRDY gaa LOW; udebleven faerdigmelding giver fejl ved 110 ms.
+Efter RTD-aflaesning skal DRDY vaere HIGH igen, foer maaletallet accepteres.
+En ignoreret start med gammel plausibel vaerdi og fast HIGH/LOW afvises.
+Samme temperatur i flere nye konverteringer er derimod gyldig.
+Se [MAX31865-databladet, DRDY og figur 9](https://www.analog.com/media/en/technical-documentation/data-sheets/MAX31865.pdf).
+Maaling og proces koerer i en separat kontrolopgave med 5 ms planlagt periode.
+Wi-Fi, web, display og logudskrift koerer uden for denne opgave. SNTP
+synkroniserer tid i baggrunden; manglende internet eller klokkeslaet
+stopper ikke maalingerne. Wi-Fi-genforbindelse genstarter ikke controlleren.
 Sensorvaerdien tidsstemples ved konverteringsstart, saa sen aflaesning ikke
 goer gamle data friske. Adfaerden skal ogsaa verificeres paa de fysiske chips.
 
@@ -352,17 +363,21 @@ Elektriske thresholds svarer omtrent til 50-200 ohm og supplerer
 softwaregraenserne. Foerste registrerede fejl goer straks maalevaerdien
 ugyldig (NAN); den tidligere gyldige vaerdi bruges ikke som reserve til gas.
 Data bliver ogsaa ugyldige, naar alderen er over fem sekunder. En central
-interlock lukker gas ved naeste sikkerhedskontrol i ALLE proces- og manuelle
-tilstande. Alle indkoblingsveje kontrollerer begge sensorers sundhed.
+interlock lukker AUTOMATISK gas ved naeste sikkerhedskontrol. Alle automatiske
+indkoblingsveje kontrollerer begge sensorers sundhed. Manuel gas og pumpe
+i IDLE/PAUSED kan taendes/slukkes uden gyldige temperaturer; manuelt taendt
+gas lukkes ikke ved sensorfejl eller gamle data. Dette er brugerens valgte adfaerd.
 Geninitialisering sker ved hver tredje fejl, ogsaa efter at fejltaelleren
 har naaet 255. Firmwaredefault for pumpe/gas/buzzer saettes LOW tidligt i boot.
 Relaemodulerne bruges uden R4/R5; buzzer-driverens R6-pulldown beholdes.
 
-Manuel gas forbliver slukket efter recovery, indtil den taendes igen.
+Manuel gas bevarer den valgte tilstand under sensorfejl og recovery.
+Stop/reset og overgang til automatisk drift ophæver manuel gas.
 En aktiv automatisk proces kan genoptage varmen, naar begge sensorer igen
 er gyldige; fejl er ikke laast til operatoerkvittering. Pumpens eksisterende
-procespolitik er bevaret. Loekkens netvaerkskald kan stadig forsinke fysisk
-reaktion, saa den maksimale afbrydelsestid skal maales paa hardwaren.
+procespolitik er bevaret. Fysisk maksimal afbrydelsestid skal stadig maales.
+Se [driftsgennemgangen](temperature-robustness-review.md) for implementering,
+vedligeholdelseskrav og validering. Alle resets starter IDLE med udgange OFF.
 
 Kalibrering af begge PT100 kan indtastes via System -> Temperaturkalibrering.
 Se [kalibreringsvejledningen](pt100-calibration.md) for metode, graenser,
@@ -379,8 +394,9 @@ dummybelastninger paa udgangene:
    normal maaling; den tidligere digitale sensors opstartsvaerdi er ikke relevant.
 4. Afbryd hver af de tre sensorledninger enkeltvis, kortslut sensoren, og
    afbryd et MAX31865-modul. Verificer fejlstatus, maalingens alder og gas-OFF
-   ved foerste registrerede fejl samt ved udloeb af gyldighedstiden. Gentag
-   i IDLE/PAUSED med manuel gas og i alle automatiske faser. Test recovery.
+   ved foerste registrerede fejl samt ved udloeb af gyldighedstiden i alle
+   automatiske faser. I IDLE/PAUSED skal manuel gas og pumpe fortsat kunne
+   betjenes trods sensorfejl, og manuel gas skal bevare sin tilstand. Test recovery.
 5. Test under pumpe-/ventilskift, WiFi og OTA samt ved realistiske kabellaengder.
    Kontroller temperaturafvigelse, stoeg og fejlreaktion med en referencemaaler.
 

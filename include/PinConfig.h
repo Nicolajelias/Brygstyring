@@ -5,6 +5,8 @@
 
 constexpr uint8_t PIN_TEMP_GRYDE  = 4;
 constexpr uint8_t PIN_TEMP_VENTIL = 5;
+constexpr uint8_t PIN_TEMP_GRYDE_DRDY = 6;
+constexpr uint8_t PIN_TEMP_VENTIL_DRDY = 7;
 constexpr uint8_t PIN_TEMP_SCK    = 12;
 constexpr uint8_t PIN_TEMP_MOSI   = 13;
 constexpr uint8_t PIN_TEMP_MISO   = 14;

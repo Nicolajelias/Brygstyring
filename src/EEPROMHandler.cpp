@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <math.h>
 #include <string.h>
+#include <IPAddress.h>
 
 #define EEPROM_SIZE 512
 #define EEPROM_CONFIG_START 0
@@ -17,9 +18,6 @@ bool hasTerminator(const char* value, size_t capacity) {
 bool isConfigSane(const Config& cfg) {
     return hasTerminator(cfg.ssid, sizeof(cfg.ssid)) &&
            hasTerminator(cfg.password, sizeof(cfg.password)) &&
-           hasTerminator(cfg.ip, sizeof(cfg.ip)) &&
-           hasTerminator(cfg.gw, sizeof(cfg.gw)) &&
-           hasTerminator(cfg.sn, sizeof(cfg.sn)) &&
            isfinite(cfg.tempOffset) && cfg.tempOffset >= 0.0f && cfg.tempOffset <= 30.0f &&
            isfinite(cfg.hysteresis) && cfg.hysteresis >= 0.1f && cfg.hysteresis <= 10.0f &&
            cfg.mashTime >= 60 && cfg.mashTime <= 300UL * 60UL &&
@@ -27,6 +25,15 @@ bool isConfigSane(const Config& cfg) {
            cfg.boilTime >= 60 && cfg.boilTime <= 300UL * 60UL &&
            isfinite(cfg.mashSetpoint) && cfg.mashSetpoint >= 20.0f && cfg.mashSetpoint <= 100.0f &&
            isfinite(cfg.mashoutSetpoint) && cfg.mashoutSetpoint >= 20.0f && cfg.mashoutSetpoint <= 100.0f;
+}
+bool networkSane(const Config& cfg) {
+    if (!hasTerminator(cfg.ip,sizeof(cfg.ip)) || !hasTerminator(cfg.gw,sizeof(cfg.gw)) || !hasTerminator(cfg.sn,sizeof(cfg.sn))) return false;
+    if (!cfg.ip[0] && !cfg.gw[0] && !cfg.sn[0]) return true;
+    IPAddress ip,gw,sn;
+    if (!ip.fromString(cfg.ip) || !gw.fromString(cfg.gw) || !sn.fromString(cfg.sn)) return false;
+    const uint32_t mask = (uint32_t(sn[0])<<24) | (uint32_t(sn[1])<<16) | (uint32_t(sn[2])<<8) | sn[3];
+    const uint32_t inverse = ~mask;
+    return mask != 0 && inverse != 0 && (inverse & (inverse + 1)) == 0;
 }
 }
 
@@ -37,6 +44,11 @@ void EEPROMHandler::begin() {
     if (!isConfigSane(config)) {
         Serial.println("[EEPROM] Invalid configuration; restoring safe defaults");
         resetToDefaults();
+    } else if (!networkSane(config)) {
+        // Legacy process records at offset 100 could corrupt sn. Keep credentials.
+        memset(config.ip,0,sizeof(config.ip)); memset(config.gw,0,sizeof(config.gw)); memset(config.sn,0,sizeof(config.sn));
+        save();
+        Serial.println("[EEPROM] Invalid static network fields cleared; credentials retained, using DHCP");
     }
 }
 

@@ -18,6 +18,7 @@ static Adafruit_SSD1306 display(128, 64, &Wire, OLED_RESET);
 
 namespace {
   unsigned long lastUpdate = 0;
+  bool ready = false;
   
   void drawText(const String &text, int16_t x, int16_t y, uint8_t size = 1) {
     display.setCursor(x, y);
@@ -28,7 +29,11 @@ namespace {
 
 void DisplayHandler::begin() {
   Wire.begin(PIN_OLED_SDA, PIN_OLED_SCL);
-  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  Wire.setTimeOut(5);
+  Wire.beginTransmission(0x3C);
+  if (Wire.endTransmission() != 0) return;
+  ready = display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  if (!ready) return;
   display.clearDisplay();
   display.setTextColor(WHITE);
   display.setFont(&FreeSans9pt7b);
@@ -37,6 +42,7 @@ void DisplayHandler::begin() {
 }
 
 void DisplayHandler::showMessage(const String &msg) {
+  if (!ready) return;
   display.clearDisplay();
   drawText(msg, 0, 20);
   display.display();
@@ -51,10 +57,13 @@ void DisplayHandler::showMessage(const String &msg) {
  * - Linje 3: Ventiltemperatur (hvis showVentil er true, ellers tomt).
  */
 void DisplayHandler::update(float tGryde, float tVentil, bool showVentil, const String &processStep, unsigned long remainingTime) {
+  if (!ready) return;
   unsigned long now = millis();
   if (now - lastUpdate < 500)
     return;
   lastUpdate = now;
+  Wire.beginTransmission(0x3C);
+  if (Wire.endTransmission() != 0) { ready = false; return; }
   
   display.clearDisplay();
   display.setFont(); // Standardfonten (typisk 5x7)
@@ -105,6 +114,7 @@ void drawCenteredText(const String &text, int16_t y, const GFXfont *font = NULL)
 
 
 void DisplayHandler::displayBeerAnimation() {
+  if (!ready) return;
   // Tegn animationen midt på skærmen
   // Beregn centreringskoordinater for animationen baseret på dine bitmap-dimensioner (beerFrameWidth og beerFrameHeight)
   int animX = (display.width() - beerFrameWidth) / 2;

@@ -4,13 +4,20 @@
 #include "TemperatureHandler.h"
 #include <Arduino.h>
 #include <stdio.h>
-#include <EEPROM.h>
-#define EEPROM_PROCESS_STATE_START 100
+#include "ControlRuntime.h"
+#include "RuntimeLog.h"
+#include "ClockService.h"
+#include "ProcessStorage.h"
 
 // Definer BOILHEATUP-tiden (i sekunder). Her er den sat til 10 minutter.
 static unsigned long boilHeatupTime = 10 * 60;
 
 namespace {
+  bool manualGas = false;
+  bool rawButton = false, stableButton = false;
+  unsigned long buttonChangedAt = 0, pulseUntil = 0;
+  bool pulseActive = false;
+  bool buttonPressed() { return stableButton; }
   constexpr uint8_t BUZZER_CHANNEL = 7;
 constexpr uint32_t BUZZER_FREQUENCY_HZ = 750;
 constexpr uint8_t BUZZER_RESOLUTION_BITS = 10;
@@ -25,19 +32,9 @@ constexpr uint8_t BUZZER_RESOLUTION_BITS = 10;
   }
 }
 
-struct ProcessState {
-  unsigned long processStartEpoch;
-  uint8_t currentState; // gemt som uint8_t svarende til BrewState
-  bool timerStarted;
-};
-
 // ============================
 // STATISKE MEDLEMMER
 // ============================
-
-// NTP-klient
-WiFiUDP ProcessHandler::ntpUDP;
-NTPClient ProcessHandler::timeClient(ntpUDP, "pool.ntp.org", 3600, 60000);
 
 // Pins
 uint8_t ProcessHandler::pinGas    = 0;
@@ -95,6 +92,8 @@ String ProcessHandler::endTimeStr   = "";
 // Hjælpefunktion: Formatterer en epoch-tid (sekunder) til HH:MM:SS
 // ----------------------------
 String ProcessHandler::formatEpochTime(unsigned long epoch) {
+  ControlRuntime::Guard guard;
+  if (epoch < 1609459200UL) return "--:--:--";
   unsigned long rawTime = epoch % 86400UL;
   int hours   = rawTime / 3600;
   int minutes = (rawTime % 3600) / 60;
@@ -105,6 +104,7 @@ String ProcessHandler::formatEpochTime(unsigned long epoch) {
 }
 
 String ProcessHandler::getProcessStep() {
+  ControlRuntime::Guard guard;
   switch (currentState) {
     case BrewState::IDLE:
       return "Idle";
@@ -128,6 +128,7 @@ String ProcessHandler::getProcessStep() {
 // PUBLIC METODER
 // ============================
 void ProcessHandler::begin(uint8_t gasP, uint8_t pumpP, uint8_t buzzerP, uint8_t buttonP) {
+  ControlRuntime::Guard guard;
   pinGas    = gasP;
   pinPump   = pumpP;
   pinBuzzer = buzzerP;
@@ -145,8 +146,11 @@ void ProcessHandler::begin(uint8_t gasP, uint8_t pumpP, uint8_t buzzerP, uint8_t
   ledcAttachPin(pinBuzzer, BUZZER_CHANNEL);
   buzzerOff();
 
-  timeClient.begin();
-  timeClient.update();
+  manualGas = false;
+  rawButton = stableButton = false;
+  gasValveOn = pumpOn = false;
+  buttonChangedAt = millis();
+  pulseActive = false;
 
   // Hent den gemte konfiguration fra EEPROM
   Config cfg = EEPROMHandler::getConfig();
@@ -158,19 +162,21 @@ void ProcessHandler::begin(uint8_t gasP, uint8_t pumpP, uint8_t buzzerP, uint8_t
   setHysteresis(cfg.hysteresis);
   setValveOffset(cfg.tempOffset);
 
-  // Forsøg at genoptage en eventuel gemt proces state
+  // Reset starts with outputs OFF; persisted state never resumes heating.
   if (!restoreProcessState()) {
     currentState = BrewState::IDLE;
     timerStarted = false;
   }
   
-  Serial.println("[ProcessHandler] begin() -> " + getProcessStatus());
+  RuntimeLog.println("[ProcessHandler] begin() -> " + getProcessStatus());
 }
 
 void ProcessHandler::update(float tGryde, float tVentil) {
+  ControlRuntime::Guard guard;
   enforceTemperatureSafety();
-  timeClient.update();
-  enforceTemperatureSafety();
+  const bool pressed = digitalRead(pinButton) == LOW;
+  if (pressed != rawButton) { rawButton = pressed; buttonChangedAt = millis(); }
+  if (millis() - buttonChangedAt >= 50) stableButton = rawButton;
   handleBuzzer();
 
   switch (currentState) {
@@ -185,11 +191,11 @@ void ProcessHandler::update(float tGryde, float tVentil) {
         if (!buzzerActive) {
           buzzerActive = true;
           StatusLED::setAwaitingConfirmation(true);
-          Serial.println("[ProcessHandler] Mæskning setpoint nået. Tryk på knappen for at starte nedtælling.");
+          RuntimeLog.println("[ProcessHandler] Mæskning setpoint nået. Tryk på knappen for at starte nedtælling.");
         }
         if (userConfirmed) {
           processStartMillis = millis();
-          processStartEpoch  = timeClient.getEpochTime();
+          processStartEpoch  = ClockService::epoch();
           timerStarted = true;
           startTimeStr = getFormattedTime();
           endTimeStr = formatEpochTime(processStartEpoch + mashTime);
@@ -197,7 +203,7 @@ void ProcessHandler::update(float tGryde, float tVentil) {
           userConfirmed = false;
           StatusLED::setAwaitingConfirmation(false);
           saveProcessState();
-          Serial.println("[ProcessHandler] Mæskningsnedtælling startet.");
+          RuntimeLog.println("[ProcessHandler] Mæskningsnedtælling startet.");
         }
       }
       if (timerStarted) {
@@ -213,11 +219,11 @@ void ProcessHandler::update(float tGryde, float tVentil) {
         if (!buzzerActive) {
             buzzerActive = true;
             StatusLED::setAwaitingConfirmation(true);
-            Serial.println("[ProcessHandler] Udmæskning setpoint nået. Tryk på knappen for at starte nedtælling af udmæskningstiden.");
+            RuntimeLog.println("[ProcessHandler] Udmæskning setpoint nået. Tryk på knappen for at starte nedtælling af udmæskningstiden.");
         }
         if (userConfirmed) {
             processStartMillis = millis();
-            processStartEpoch  = timeClient.getEpochTime();
+            processStartEpoch  = ClockService::epoch();
             timerStarted = true;
             startTimeStr = getFormattedTime();
             endTimeStr = formatEpochTime(processStartEpoch + mashoutTime);
@@ -225,7 +231,7 @@ void ProcessHandler::update(float tGryde, float tVentil) {
             userConfirmed = false;
             StatusLED::setAwaitingConfirmation(false);
             saveProcessState();
-            Serial.println("[ProcessHandler] Udmæskningsnedtælling startet.");
+            RuntimeLog.println("[ProcessHandler] Udmæskningsnedtælling startet.");
         }
     }
     if (timerStarted) {
@@ -244,7 +250,7 @@ void ProcessHandler::update(float tGryde, float tVentil) {
       pumpControl(false);
       if (!timerStarted) {
           processStartMillis = millis();
-          processStartEpoch  = timeClient.getEpochTime();
+          processStartEpoch  = ClockService::epoch();
           timerStarted = true;
           startTimeStr = getFormattedTime();
           endTimeStr = formatEpochTime(processStartEpoch + boilHeatupTime);
@@ -252,24 +258,22 @@ void ProcessHandler::update(float tGryde, float tVentil) {
           buzzerActive = true;
           StatusLED::setAwaitingConfirmation(true);
           buzzerOn();
-          delay(200); // Buzz kort (200 ms)
+          pulseUntil = millis() + 200;
+          pulseActive = true;
           buzzerActive = false;
-          buzzerOff();
-          StatusLED::setAwaitingConfirmation(false);
           saveProcessState();
-          Serial.println("[ProcessHandler] BOILHEATUP nedtælling startet.");
+          RuntimeLog.println("[ProcessHandler] BOILHEATUP nedtælling startet.");
       } else {
           if (getRemainingTime() == 0) {
               StatusLED::setAwaitingConfirmation(true);
               // Når de 30 min er udløbet, skal systemet vente på brugerens tryk for at starte kogetiden.
               // Tjek knappen direkte, da handleBuzzer() ikke vil sætte userConfirmed, hvis buzeren er slukket.
-              if (digitalRead(pinButton) == LOW) {
-                  delay(50); // Debounce
-                  if (digitalRead(pinButton) == LOW) {
+              if (buttonPressed()) {
+                  if (buttonPressed()) {
                       currentState = BrewState::BOILING;
                       timerStarted = false; // Kogetiden starter ved næste bekræftelse i BOILING
                       StatusLED::setAwaitingConfirmation(false);
-                      Serial.println("[ProcessHandler] BOILHEATUP bekræftet. Skifter til BOILING (venter på kogepunktbekræftelse).");
+                      RuntimeLog.println("[ProcessHandler] BOILHEATUP bekræftet. Skifter til BOILING (venter på kogepunktbekræftelse).");
                       saveProcessState();
                   }
               }
@@ -296,12 +300,12 @@ void ProcessHandler::update(float tGryde, float tVentil) {
               if (!buzzerActive) {
                   buzzerActive = true;
                   StatusLED::setAwaitingConfirmation(true);
-                  Serial.println("[ProcessHandler] Kogepunkt: Vent på bekræftelse. Tryk på knappen for at starte kogetidsnedtællingen.");
+                  RuntimeLog.println("[ProcessHandler] Kogepunkt: Vent på bekræftelse. Tryk på knappen for at starte kogetidsnedtællingen.");
               }
               if (userConfirmed) {
                   // Start kogetidsnedtællingen
                   processStartMillis = millis();
-                  processStartEpoch  = timeClient.getEpochTime();
+                  processStartEpoch  = ClockService::epoch();
                   timerStarted = true;
                   resetHopAlarms();
                   startTimeStr = getFormattedTime();
@@ -310,7 +314,7 @@ void ProcessHandler::update(float tGryde, float tVentil) {
                   userConfirmed = false;
                   StatusLED::setAwaitingConfirmation(false);
                   saveProcessState();
-                  Serial.println("[ProcessHandler] Kogetidsnedtælling startet.");
+                  RuntimeLog.println("[ProcessHandler] Kogetidsnedtælling startet.");
               }
           } else {
               checkHopAlarms();
@@ -322,7 +326,7 @@ void ProcessHandler::update(float tGryde, float tVentil) {
                   if (!buzzerActive) {
                       buzzerActive = true;
                       StatusLED::setAwaitingConfirmation(true);
-                      Serial.println("[ProcessHandler] Kogetid udløbet. Buzzeren lyder indtil bruger bekræfter.");
+                      RuntimeLog.println("[ProcessHandler] Kogetid udløbet. Buzzeren lyder indtil bruger bekræfter.");
                   }
               } else {
                   checkTimeAndNextStep(boilTime);
@@ -331,9 +335,8 @@ void ProcessHandler::update(float tGryde, float tVentil) {
       } else {
           // Når kogetiden er udløbet (boilingComplete er true), vent på brugerbekræftelse.
           // Her tjekkes knappen direkte (du kan evt. bruge userConfirmed, hvis handleBuzzer() virker i denne fase).
-          if (digitalRead(pinButton) == LOW) {
-              delay(50); // debounce
-              if (digitalRead(pinButton) == LOW) {
+          if (buttonPressed()) {
+              if (buttonPressed()) {
                   // Ved knaptryk afsluttes kogetidsfasen: buzzeren slukkes, og tilstanden sættes til IDLE.
                   boilingComplete = false;
                   timerStarted = false;
@@ -342,7 +345,7 @@ void ProcessHandler::update(float tGryde, float tVentil) {
                   currentState = BrewState::IDLE;
                   StatusLED::setAwaitingConfirmation(false);
                   saveProcessState();
-                  Serial.println("[ProcessHandler] Kogetid bekræftet. Skifter til IDLE.");
+                  RuntimeLog.println("[ProcessHandler] Kogetid bekræftet. Skifter til IDLE.");
               }
           }
       }
@@ -352,6 +355,7 @@ void ProcessHandler::update(float tGryde, float tVentil) {
 }
 
 void ProcessHandler::checkTimeAndNextStep(unsigned long stepTimeSec) {
+  ControlRuntime::Guard guard;
   unsigned long nowMs = millis();
   unsigned long elapsedSec = (nowMs - processStartMillis) / 1000;
   if (elapsedSec >= stepTimeSec) {
@@ -361,7 +365,7 @@ void ProcessHandler::checkTimeAndNextStep(unsigned long stepTimeSec) {
         if (!buzzerActive) {
           buzzerActive = true;
           StatusLED::setAwaitingConfirmation(true);
-          Serial.println("[ProcessHandler] Tiden udløbet. Vent på bekræftelse for at skifte til næste trin.");
+          RuntimeLog.println("[ProcessHandler] Tiden udløbet. Vent på bekræftelse for at skifte til næste trin.");
         }
         return; // Vent på at brugeren trykker.
       }
@@ -372,33 +376,42 @@ void ProcessHandler::checkTimeAndNextStep(unsigned long stepTimeSec) {
 }
 
 void ProcessHandler::startMashing() {
+  ControlRuntime::Guard guard;
+  if (ControlRuntime::maintenance()) return;
+  gasControl(false);
   if (!TemperatureHandler::isGrydeValid() || !TemperatureHandler::isVentilValid()) {
     gasControl(false);
-    Serial.println("[Safety] Mashing rejected: temperature data unavailable");
+    RuntimeLog.println("[Safety] Mashing rejected: temperature data unavailable");
     return;
   }
   currentState = BrewState::MASHING;
   timerStarted = false;
   saveProcessState();
-  Serial.println("[ProcessHandler] startMashing -> MASHING");
+  RuntimeLog.println("[ProcessHandler] startMashing -> MASHING");
 }
 
 void ProcessHandler::startMashout() {
+  ControlRuntime::Guard guard;
+  if (ControlRuntime::maintenance()) return;
+  gasControl(false);
   if (!TemperatureHandler::isGrydeValid() || !TemperatureHandler::isVentilValid()) {
     gasControl(false);
-    Serial.println("[Safety] Mashout rejected: temperature data unavailable");
+    RuntimeLog.println("[Safety] Mashout rejected: temperature data unavailable");
     return;
   }
   currentState = BrewState::MASHOUT;
   timerStarted = false;
   saveProcessState();
-  Serial.println("[ProcessHandler] startMashout -> MASHOUT");
+  RuntimeLog.println("[ProcessHandler] startMashout -> MASHOUT");
 }
 
 void ProcessHandler::startBoiling() {
+  ControlRuntime::Guard guard;
+  if (ControlRuntime::maintenance()) return;
+  gasControl(false);
   if (!TemperatureHandler::isGrydeValid() || !TemperatureHandler::isVentilValid()) {
     gasControl(false);
-    Serial.println("[Safety] Boiling rejected: temperature data unavailable");
+    RuntimeLog.println("[Safety] Boiling rejected: temperature data unavailable");
     return;
   }
   boilingComplete = false;
@@ -406,8 +419,7 @@ void ProcessHandler::startBoiling() {
   timerStarted = true;
   resetHopAlarms();
   processStartMillis = millis();
-  timeClient.update();
-  processStartEpoch  = timeClient.getEpochTime();
+  processStartEpoch  = ClockService::epoch();
   startTimeStr = getFormattedTime();
   endTimeStr   = formatEpochTime(processStartEpoch + boilTime);
   buzzerActive = false;
@@ -415,11 +427,13 @@ void ProcessHandler::startBoiling() {
   gasControl(true);
   pumpControl(false);
   saveProcessState();
-  Serial.println("[ProcessHandler] startBoiling -> BOILING (kogetid startet med det samme)");
+  RuntimeLog.println("[ProcessHandler] startBoiling -> BOILING (kogetid startet med det samme)");
 }
 
 void ProcessHandler::stopProcess() {
+  ControlRuntime::Guard guard;
   currentState = BrewState::IDLE;
+  pulseActive = false;
   timerStarted = false;
   gasControl(false);
   pumpControl(false);
@@ -430,79 +444,67 @@ void ProcessHandler::stopProcess() {
   buzzerOff();
   StatusLED::setAwaitingConfirmation(false);
   saveProcessState();
-  Serial.println("[ProcessHandler] stopProcess -> IDLE");
+  RuntimeLog.println("[ProcessHandler] stopProcess -> IDLE");
 }
 
 void ProcessHandler::pauseProcess() {
+  ControlRuntime::Guard guard;
   if (currentState != BrewState::IDLE && currentState != BrewState::PAUSED) {
     pauseOffset = millis() - processStartMillis;
     previousState = currentState;
     currentState = BrewState::PAUSED;
+    pulseActive = false;
     gasControl(false);
     pumpControl(false);
     buzzerActive = false;
     buzzerOff();
     StatusLED::setAwaitingConfirmation(false);
     saveProcessState();
-    Serial.println("[ProcessHandler] Proces pauset.");
+    RuntimeLog.println("[ProcessHandler] Proces pauset.");
   }
 }
 
 void ProcessHandler::resumeProcess() {
+  ControlRuntime::Guard guard;
+  if (ControlRuntime::maintenance()) return;
+  gasControl(false);
   if (currentState == BrewState::PAUSED) {
+    if (!TemperatureHandler::isGrydeHealthy() || !TemperatureHandler::isVentilHealthy()) return;
     processStartMillis = millis() - pauseOffset;
     currentState = previousState;
     saveProcessState();
-    Serial.println("[ProcessHandler] Proces genoptaget.");
+    RuntimeLog.println("[ProcessHandler] Proces genoptaget.");
   }
 }
 
 void ProcessHandler::saveProcessState() {
-  ProcessState ps;
-  ps.processStartEpoch = processStartEpoch;
-  ps.currentState = static_cast<uint8_t>(currentState);
-  ps.timerStarted = timerStarted;
-  EEPROM.put(EEPROM_PROCESS_STATE_START, ps);
-  EEPROM.commit();
+  ControlRuntime::Guard guard;
+  ProcessStorage::stage(processStartEpoch, static_cast<uint8_t>(currentState), timerStarted);
 }
 
 bool ProcessHandler::restoreProcessState() {
-  ProcessState ps;
-  EEPROM.get(EEPROM_PROCESS_STATE_START, ps);
-  if (ps.processStartEpoch == 0 || ps.currentState > static_cast<uint8_t>(BrewState::PAUSED))
-    return false;
-  
-  timeClient.update();
-  unsigned long currentEpoch = timeClient.getEpochTime();
-  if (currentEpoch >= ps.processStartEpoch && currentEpoch - ps.processStartEpoch < 3600) {
-    currentState = static_cast<BrewState>(ps.currentState);
-    timerStarted = ps.timerStarted;
-    processStartEpoch = ps.processStartEpoch;
-    unsigned long elapsed = currentEpoch - processStartEpoch;
-    processStartMillis = millis() - (elapsed * 1000);
-    Serial.println("[ProcessHandler] Process state restored.");
-    return true;
-  }
+  ControlRuntime::Guard guard;
+  // A power/reset cycle always starts OFF/IDLE. Never restart heating from a
+  // stale wall clock or a legacy record that overlapped the network config.
   return false;
 }
 
 void ProcessHandler::resetProcessState() {
+  ControlRuntime::Guard guard;
   currentState = BrewState::IDLE;
   timerStarted = false;
-  processStartEpoch = 0;
-  processStartMillis = 0;
-  gasControl(false);
-  pumpControl(false);
-  hopAlarmActive = false;
-  hopAlarmAwaitingRelease = false;
-  activeHopIndex = -1;
-  ProcessState ps = {0, static_cast<uint8_t>(BrewState::IDLE), false};
-  EEPROM.put(EEPROM_PROCESS_STATE_START, ps);
-  EEPROM.commit();
-  Serial.println("[ProcessHandler] Process state reset.");
+  processStartEpoch = processStartMillis = 0;
+  gasControl(false); pumpControl(false);
+  pulseActive = false; buzzerActive = false; buzzerOff();
+  resetHopAlarms();
+  StatusLED::setAwaitingConfirmation(false);
+  userConfirmed = false;
+  startTimeStr = endTimeStr = "";
+  saveProcessState();
 }
 
 String ProcessHandler::getProcessStatus() {
+  ControlRuntime::Guard guard;
   switch (currentState) {
     case BrewState::IDLE:
       return "Idle";
@@ -522,6 +524,7 @@ String ProcessHandler::getProcessStatus() {
 }
 
 unsigned long ProcessHandler::getRemainingTime() {
+  ControlRuntime::Guard guard;
   unsigned long duration = 0;
   switch (currentState) {
     case BrewState::MASHING:
@@ -547,6 +550,7 @@ unsigned long ProcessHandler::getRemainingTime() {
 }
 
 String ProcessHandler::getRemainingTimeFormatted() {
+  ControlRuntime::Guard guard;
   unsigned long rem = getRemainingTime();
   unsigned long mm = rem / 60;
   unsigned long ss = rem % 60;
@@ -556,12 +560,14 @@ String ProcessHandler::getRemainingTimeFormatted() {
 }
 
 String ProcessHandler::getFormattedTime() {
-  timeClient.update();
-  unsigned long epochTime = timeClient.getEpochTime();
+  ControlRuntime::Guard guard;
+  if (!ClockService::synchronized()) return "--:--:--";
+  unsigned long epochTime = ClockService::epoch();
   return formatEpochTime(epochTime);
 }
 
 String ProcessHandler::getProcessSymbol() {
+  ControlRuntime::Guard guard;
   switch (currentState) {
     case BrewState::IDLE:    return "\xB0";
     case BrewState::PAUSED:  return "\xBA";
@@ -570,14 +576,17 @@ String ProcessHandler::getProcessSymbol() {
 }
 
 ProcessHandler::BrewState ProcessHandler::getCurrentState() {
+  ControlRuntime::Guard guard;
   return currentState;
 }
 
 bool ProcessHandler::isTimerStarted() {
+  ControlRuntime::Guard guard;
   return timerStarted;
 }
 
 void ProcessHandler::setHopSchedule(const HopAddition* additions, uint8_t count) {
+  ControlRuntime::Guard guard;
   hopCount = min(count, MAX_HOP_ADDITIONS);
   for (uint8_t index = 0; index < MAX_HOP_ADDITIONS; ++index) {
     hopSchedule[index] = index < hopCount && additions ? additions[index] : HopAddition{};
@@ -585,17 +594,23 @@ void ProcessHandler::setHopSchedule(const HopAddition* additions, uint8_t count)
   resetHopAlarms();
 }
 
-uint8_t ProcessHandler::getHopCount() { return hopCount; }
-const HopAddition* ProcessHandler::getHop(uint8_t index) { return index < hopCount ? &hopSchedule[index] : nullptr; }
-bool ProcessHandler::isHopTriggered(uint8_t index) { return index < hopCount && hopTriggered[index]; }
-bool ProcessHandler::isHopAlarmActive() { return hopAlarmActive; }
+uint8_t ProcessHandler::getHopCount() {
+  ControlRuntime::Guard guard; return hopCount; }
+const HopAddition* ProcessHandler::getHop(uint8_t index) {
+  ControlRuntime::Guard guard; return index < hopCount ? &hopSchedule[index] : nullptr; }
+bool ProcessHandler::isHopTriggered(uint8_t index) {
+  ControlRuntime::Guard guard; return index < hopCount && hopTriggered[index]; }
+bool ProcessHandler::isHopAlarmActive() {
+  ControlRuntime::Guard guard; return hopAlarmActive; }
 const char* ProcessHandler::getActiveHopName() {
+  ControlRuntime::Guard guard;
   return activeHopIndex >= 0 && activeHopIndex < hopCount ? hopSchedule[activeHopIndex].name : "";
 }
 
 void ProcessHandler::acknowledgeHopAlarm() {
+  ControlRuntime::Guard guard;
   if (!hopAlarmActive) return;
-  Serial.printf("[Hops] Addition acknowledged: %s\n", getActiveHopName());
+  RuntimeLog.printf("[Hops] Addition acknowledged: %s\n", getActiveHopName());
   hopAlarmActive = false;
   hopAlarmAwaitingRelease = false;
   activeHopIndex = -1;
@@ -606,7 +621,8 @@ void ProcessHandler::acknowledgeHopAlarm() {
 }
 
 bool ProcessHandler::togglePump() {
-  if (currentState == BrewState::IDLE || currentState == BrewState::PAUSED) {
+  ControlRuntime::Guard guard;
+  if (!ControlRuntime::maintenance() && (currentState == BrewState::IDLE || currentState == BrewState::PAUSED)) {
     pumpOn = !pumpOn;
     digitalWrite(pinPump, pumpOn ? HIGH : LOW);
   }
@@ -614,82 +630,100 @@ bool ProcessHandler::togglePump() {
 }
 
 bool ProcessHandler::toggleGasValve() {
-  if (currentState == BrewState::IDLE || currentState == BrewState::PAUSED) {
-    if (!gasValveOn && (!TemperatureHandler::isGrydeValid() || !TemperatureHandler::isVentilValid())) {
-      Serial.println("[Safety] Manual gas rejected: temperature data unavailable");
-      gasControl(false);
-      return false;
-    }
-    gasControl(!gasValveOn);
+  ControlRuntime::Guard guard;
+  if (!ControlRuntime::maintenance() && (currentState == BrewState::IDLE || currentState == BrewState::PAUSED)) {
+    gasValveOn = !gasValveOn;
+    manualGas = gasValveOn;
+    digitalWrite(pinGas, gasValveOn ? HIGH : LOW);
   }
   return gasValveOn;
 }
+bool ProcessHandler::isGasManual() {
+  ControlRuntime::Guard guard; return manualGas && gasValveOn; }
 
 bool ProcessHandler::isPumpOn() {
+  ControlRuntime::Guard guard;
   return pumpOn;
 }
 
 bool ProcessHandler::isGasValveOn() {
+  ControlRuntime::Guard guard;
   return gasValveOn;
 }
 
 String ProcessHandler::getStartTime() {
+  ControlRuntime::Guard guard;
   return startTimeStr;
 }
 
 String ProcessHandler::getEndTime() {
+  ControlRuntime::Guard guard;
   if (!timerStarted)
     return "Venter på at setpoint er nået";
   return endTimeStr;
 }
 
 void ProcessHandler::setHysteresis(float value) {
+  ControlRuntime::Guard guard;
   hysteresis = value;
 }
 float ProcessHandler::getHysteresis() {
+  ControlRuntime::Guard guard;
   return hysteresis;
 }
 
 void ProcessHandler::setValveOffset(float offset) {
+  ControlRuntime::Guard guard;
   valveOffset = offset;
 }
 
 float ProcessHandler::getValveOffset() {
+  ControlRuntime::Guard guard;
   return valveOffset;
 }
 
 void ProcessHandler::setMashTime(unsigned long time) {
+  ControlRuntime::Guard guard;
   mashTime = time;
 }
 unsigned long ProcessHandler::getMashTime() {
+  ControlRuntime::Guard guard;
   return mashTime;
 }
 
 void ProcessHandler::setMashoutTime(unsigned long time) {
+  ControlRuntime::Guard guard;
   mashoutTime = time;
 }
 unsigned long ProcessHandler::getMashoutTime() {
+  ControlRuntime::Guard guard;
   return mashoutTime;
 }
 
 void ProcessHandler::setBoilTime(unsigned long time) {
+  ControlRuntime::Guard guard;
   boilTime = time;
 }
 unsigned long ProcessHandler::getBoilTime() {
+  ControlRuntime::Guard guard;
   return boilTime;
 }
 
 void ProcessHandler::setMashSetpoint(float temp) {
+  ControlRuntime::Guard guard;
   mashSetpoint = temp;
 }
 float ProcessHandler::getMashSetpoint() {
+  ControlRuntime::Guard guard;
   return mashSetpoint;
 }
 
 void ProcessHandler::setMashoutSetpoint(float temp) {
+  ControlRuntime::Guard guard;
   mashoutSetpoint = temp;
 }
 float ProcessHandler::getMashoutSetpoint() {
+  ControlRuntime::Guard guard;
   return mashoutSetpoint;
 }
 
@@ -697,49 +731,56 @@ float ProcessHandler::getMashoutSetpoint() {
 // PRIVATE METODER
 // ============================
 void ProcessHandler::gasControl(bool state) {
-  // Every path to gas ON, including manual control, uses the same interlock.
+  ControlRuntime::Guard guard;
+  manualGas = false;
+  // Automatic gas only. Manual web operation in IDLE/PAUSED has a separate path.
   state = state && TemperatureHandler::isGrydeHealthy() && TemperatureHandler::isVentilHealthy();
   gasValveOn = state;
   digitalWrite(pinGas, state ? HIGH : LOW);
 }
 
 void ProcessHandler::enforceTemperatureSafety() {
-  if (gasValveOn && (!TemperatureHandler::isGrydeHealthy() || !TemperatureHandler::isVentilHealthy())) {
+  ControlRuntime::Guard guard;
+  if (!manualGas && gasValveOn && (!TemperatureHandler::isGrydeHealthy() || !TemperatureHandler::isVentilHealthy())) {
     gasControl(false);
-    Serial.println("[Safety] Gas closed: temperature fault or stale data");
+    RuntimeLog.println("[Safety] Gas closed: temperature fault or stale data");
   }
 }
 
 void ProcessHandler::pumpControl(bool state) {
+  ControlRuntime::Guard guard;
   pumpOn = state;
   digitalWrite(pinPump, state ? HIGH : LOW);
 }
 
 void ProcessHandler::handleBuzzer() {
+  ControlRuntime::Guard guard;
+  if (pulseActive) {
+    if (static_cast<int32_t>(millis() - pulseUntil) < 0) return;
+    pulseActive = false; buzzerOff(); StatusLED::setAwaitingConfirmation(false);
+  }
   if (hopAlarmActive) {
     buzzerOn();
     StatusLED::setAwaitingConfirmation(true);
     if (hopAlarmAwaitingRelease) {
-      if (digitalRead(pinButton) == HIGH) hopAlarmAwaitingRelease = false;
+      if (!buttonPressed()) hopAlarmAwaitingRelease = false;
       return;
     }
-    if (digitalRead(pinButton) == LOW) {
-      delay(50);
-      if (digitalRead(pinButton) == LOW) acknowledgeHopAlarm();
+    if (buttonPressed()) {
+      if (buttonPressed()) acknowledgeHopAlarm();
     }
     return;
   }
   if (buzzerActive) {
     buzzerOn();
     StatusLED::setAwaitingConfirmation(true);
-    if (digitalRead(pinButton) == LOW) {
-      delay(50);
-      if (digitalRead(pinButton) == LOW) {
+    if (buttonPressed()) {
+      if (buttonPressed()) {
         userConfirmed = true;
         buzzerActive = false;
         buzzerOff();
         StatusLED::setAwaitingConfirmation(false);
-        Serial.println("[ProcessHandler] Bruger har bekræftet skift.");
+        RuntimeLog.println("[ProcessHandler] Bruger har bekræftet skift.");
       }
     }
   }
@@ -749,6 +790,7 @@ void ProcessHandler::handleBuzzer() {
 }
 
 void ProcessHandler::resetHopAlarms() {
+  ControlRuntime::Guard guard;
   for (uint8_t index = 0; index < MAX_HOP_ADDITIONS; ++index) hopTriggered[index] = false;
   hopAlarmActive = false;
   hopAlarmAwaitingRelease = false;
@@ -756,6 +798,7 @@ void ProcessHandler::resetHopAlarms() {
 }
 
 void ProcessHandler::checkHopAlarms() {
+  ControlRuntime::Guard guard;
   if (currentState != BrewState::BOILING || !timerStarted || hopAlarmActive) return;
   const unsigned long remaining = getRemainingTime();
   for (uint8_t index = 0; index < hopCount; ++index) {
@@ -764,7 +807,7 @@ void ProcessHandler::checkHopAlarms() {
       activeHopIndex = index;
       hopAlarmActive = true;
       hopAlarmAwaitingRelease = true;
-      Serial.printf("[Hops] Add now: %s (%lu min before boil end)\n", hopSchedule[index].name,
+      RuntimeLog.printf("[Hops] Add now: %s (%lu min before boil end)\n", hopSchedule[index].name,
                     hopSchedule[index].secondsBeforeBoilEnd / 60UL);
       return;
     }
@@ -773,6 +816,7 @@ void ProcessHandler::checkHopAlarms() {
 
 // Opdateret temperaturkontrol med hysterese og ventil offset
 void ProcessHandler::temperatureControl(float currentTemp, float setpoint, float tVentil) {
+  ControlRuntime::Guard guard;
   static unsigned long lastGasSwitchTime = 0;
   unsigned long now = millis();
 
@@ -781,7 +825,7 @@ void ProcessHandler::temperatureControl(float currentTemp, float setpoint, float
     if (gasValveOn) {
       gasControl(false);
       lastGasSwitchTime = now;
-      Serial.println("[Safety] Gas closed: temperature data unavailable");
+      RuntimeLog.println("[Safety] Gas closed: temperature data unavailable");
     }
     return;
   }
@@ -816,6 +860,7 @@ void ProcessHandler::temperatureControl(float currentTemp, float setpoint, float
 }
 
 void ProcessHandler::nextStep() {
+  ControlRuntime::Guard guard;
   // Sluk outputs og deaktiver buzzeren
   gasControl(false);
   pumpControl(false);
@@ -829,23 +874,23 @@ void ProcessHandler::nextStep() {
     case BrewState::MASHING:
       currentState = BrewState::MASHOUT;
       timerStarted = false;  // Nulstil timer, så mashout-timeren starter fra 0
-      Serial.println("[ProcessHandler] Skifter: MASHING -> MASHOUT");
+      RuntimeLog.println("[ProcessHandler] Skifter: MASHING -> MASHOUT");
       break;
     case BrewState::MASHOUT:
       // Når mashout-tiden udløber, skifter vi til BOILHEATUP
       currentState = BrewState::BOILHEATUP;
       timerStarted = false;
-      Serial.println("[ProcessHandler] Mashout-tid udløbet. Skifter til BOILHEATUP (30 min nedtælling).");
+      RuntimeLog.println("[ProcessHandler] Mashout-tid udløbet. Skifter til BOILHEATUP (30 min nedtælling).");
       break;
     case BrewState::BOILHEATUP:
       // Når BOILHEATUP-tiden udløber, skifter vi til BOILING, men nedtællingen for kogetid starter først ved bekræftelse.
       currentState = BrewState::BOILING;
       timerStarted = false;
-      Serial.println("[ProcessHandler] BOILHEATUP tid udløbet. Skifter til BOILING (venter på kogepunktbekræftelse).");
+      RuntimeLog.println("[ProcessHandler] BOILHEATUP tid udløbet. Skifter til BOILING (venter på kogepunktbekræftelse).");
       break;
     case BrewState::BOILING:
       currentState = BrewState::IDLE;
-      Serial.println("[ProcessHandler] Skifter: BOILING -> IDLE (færdig)");
+      RuntimeLog.println("[ProcessHandler] Skifter: BOILING -> IDLE (færdig)");
       break;
     default:
       break;

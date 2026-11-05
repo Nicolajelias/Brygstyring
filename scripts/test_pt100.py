@@ -20,7 +20,7 @@ subprocess.run([
     str(compiler), '-std=c++14', '-DARDUINO=10800', '-Wall', '-Wextra',
     '-Itest/host', '-Iinclude', '-I' + str(library),
     'test/host/test_pt100.cpp', 'src/TemperatureHandler.cpp', 'src/ProcessHandler.cpp',
-    'src/TemperatureCalibrationWeb.cpp',
+    'src/TemperatureCalibrationWeb.cpp', 'src/ControlRuntime.cpp', 'src/ProcessStorage.cpp',
     str(library / 'Adafruit_MAX31865.cpp'), '-static', '-o', str(output),
 ], cwd=root, env=env, check=True)
 subprocess.run([str(output)], cwd=root, env=env, check=True)

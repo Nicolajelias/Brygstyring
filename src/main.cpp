@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include <esp_system.h>
+#include <WiFi.h>
 #include "WiFiHandler.h"
 #include "WebServerHandler.h"
 #include "TemperatureHandler.h"
@@ -7,115 +9,57 @@
 #include "DisplayHandler.h"
 #include "OTAHandler.h"
 #include "StatusLED.h"
-#include <WiFi.h>
-#include <ESPmDNS.h>
-#include "Version.h"
 #include "PinConfig.h"
 #include "RecipeManager.h"
-
-// =====================================================================================
-// PIN-KONFIGURATION (tilpas efter behov)
-// =====================================================================================
-// Blink-variabler til ventiltemp
-unsigned long lastBlinkToggle = 0;
-bool blinkState = false;
-
-const unsigned long longPressThreshold = 3000; // 3000 ms = 3 sekunder
-unsigned long buttonPressStart = 0;
-bool longPressHandled = false;
-
+#include "ControlRuntime.h"
+#include "ClockService.h"
+#include "ProcessStorage.h"
+#include "RuntimeLog.h"
 void setup() {
-  digitalWrite(PIN_GAS, LOW);
-  digitalWrite(PIN_PUMP, LOW);
-  digitalWrite(PIN_BUZZER, LOW);
-  pinMode(PIN_GAS, OUTPUT);
-  pinMode(PIN_PUMP, OUTPUT);
-  pinMode(PIN_BUZZER, OUTPUT);
+  for (int pin : {PIN_GAS, PIN_PUMP, PIN_BUZZER}) {
+    digitalWrite(pin, LOW); pinMode(pin, OUTPUT);
+  }
   Serial.begin(115200);
-  Serial.println();
-  Serial.println("==== Opstart af Brygkontroller (HTTP-OTA) ====");
-
+  RuntimeLog.begin();
+  Serial.println("==== Brygkontroller: independent control task ====");
+  Serial.printf("[Boot] Reset reason: %d\n", static_cast<int>(esp_reset_reason()));
   EEPROMHandler::begin();
-  RecipeManager::begin();
-  StatusLED::begin(PIN_RGB_LED);
-  pinMode(PIN_BUTTON, INPUT);
-
-  WiFiHandler::begin();
+  ProcessStorage::begin();
   ProcessHandler::begin(PIN_GAS, PIN_PUMP, PIN_BUZZER, PIN_BUTTON);
-  RecipeManager::restoreActive();
+  TemperatureHandler::begin(PIN_TEMP_GRYDE, PIN_TEMP_VENTIL);
+  StatusLED::begin(PIN_RGB_LED);
+  ControlRuntime::Maintenance startup;
+  if (!startup || !ControlRuntime::begin()) {
+    Serial.println("FATAL: control task could not start; outputs remain OFF");
+    for (;;) delay(1000);
+  }
+  RecipeManager::begin(); RecipeManager::restoreActive();
+  WiFiHandler::begin();
+  ClockService::begin();
   OTAHandler::begin();
   WebServerHandler::begin();
   DisplayHandler::begin();
-
-  DisplayHandler::displayBeerAnimation();
-  delay(5000);
-
-  if (WiFiHandler::isAPMode()) {
-    DisplayHandler::showMessage("AP-mode - 192.168.4.1");
-  } else {
-    String ipAddress = WiFi.localIP().toString();
-    DisplayHandler::showMessage("brygkontrol.local\n" + ipAddress);
-  }
-  delay(5000);
-  Serial.println("==== Opstart gennemført ====");
-  // Start acquisition after the blocking startup screens, so bias is not held on.
-  TemperatureHandler::begin(PIN_TEMP_GRYDE, PIN_TEMP_VENTIL);
+  Serial.println("==== Opstart gennemfoert ====");
 }
-
 void loop() {
-  TemperatureHandler::readTemperatures();
-  ProcessHandler::enforceTemperatureSafety();
-  WebServerHandler::handleClient();
   WiFiHandler::handleWiFi();
-
-  unsigned long now = millis();
-  OTAHandler::update(now);
-  TemperatureHandler::readTemperatures();
-  ProcessHandler::enforceTemperatureSafety();
-  const bool isGrydeValid = TemperatureHandler::isGrydeValid();
-  const bool isVentilValid = TemperatureHandler::isVentilValid();
-  const float tGryde = TemperatureHandler::getGrydeTemp();
-  const float tVentil = TemperatureHandler::getVentilTemp();
-
-  // Opdater processtyring og display med seneste gyldige temperaturer
-  if (!OTAHandler::maintenanceActive()) {
-    ProcessHandler::update(tGryde, tVentil);
-  }
-  auto brewState = ProcessHandler::getCurrentState();
-  bool processRunning = (brewState != ProcessHandler::BrewState::IDLE) && (brewState != ProcessHandler::BrewState::PAUSED);
-
-  DisplayHandler::update(
-    isGrydeValid ? tGryde : NAN,
-    isVentilValid ? tVentil : NAN,
-    blinkState,
-    ProcessHandler::getProcessStep(),
-    ProcessHandler::getRemainingTime()
-  );
-
-  StatusLED::setProcessActive(processRunning);
+  WebServerHandler::handleClient();
+  OTAHandler::update(millis());
+  ProcessStorage::flush();
+  DisplayHandler::update(TemperatureHandler::getGrydeTemp(), TemperatureHandler::getVentilTemp(),
+    ProcessHandler::isPumpOn() || (millis() / 500 % 2),
+    ProcessHandler::getProcessStep(), ProcessHandler::getRemainingTime());
   StatusLED::update();
-
-  if (!OTAHandler::maintenanceActive() && brewState == ProcessHandler::BrewState::IDLE && digitalRead(PIN_BUTTON) == LOW) {
-    if (buttonPressStart == 0) {
-      buttonPressStart = millis();
-      longPressHandled = false;
-    } else if (!longPressHandled && (millis() - buttonPressStart >= longPressThreshold)) {
-      ProcessHandler::startMashing();
-      longPressHandled = true;
-      Serial.println("Long press: Start mæsning");
-    }
-  } else {
-    buttonPressStart = 0;
-    longPressHandled = false;
+  RuntimeLog.drain();
+  static unsigned long lastDiagnostics = 0;
+  if (millis() - lastDiagnostics >= 10000) {
+    lastDiagnostics = millis();
+    const auto timing = ControlRuntime::metrics();
+    Serial.printf("[Runtime] cycles=%lu maxGap=%lu ms maxWork=%lu ms watchdog=%d pot=%.2f/%lu ms valve=%.2f/%lu ms wifi=%d rssi=%d\n",
+      static_cast<unsigned long>(timing.cycles), static_cast<unsigned long>(timing.maxGapMs),
+      static_cast<unsigned long>(timing.maxWorkMs), timing.watchdog,
+      TemperatureHandler::getGrydeTemp(), TemperatureHandler::getGrydeAgeMs(),
+      TemperatureHandler::getVentilTemp(), TemperatureHandler::getVentilAgeMs(), WiFi.status(), WiFi.RSSI());
   }
-
-  bool pumpOn = ProcessHandler::isPumpOn();
-  if (!pumpOn) {
-    if (now - lastBlinkToggle >= 500) {
-      lastBlinkToggle = now;
-      blinkState = !blinkState;
-    }
-  } else {
-    blinkState = true;
-  }
+  delay(1); // UI/network task only; control has its own 5 ms schedule.
 }

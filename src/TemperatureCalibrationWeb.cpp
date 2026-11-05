@@ -3,6 +3,7 @@
 #include "ProcessHandler.h"
 #include "OTAHandler.h"
 #include "TemperatureCalibrationPage.h"
+#include "ControlRuntime.h"
 #include <stdlib.h>
 #include <math.h>
 
@@ -11,6 +12,18 @@ void WebServerHandler::handleCalibrationPage() {
 }
 
 void WebServerHandler::handleCalibrationData() {
+  TemperatureCalibration pot, valve;
+  float potRaw, potValue, valveRaw, valveValue;
+  bool canSave;
+  {
+    ControlRuntime::Guard snapshot;
+    pot = TemperatureHandler::getGrydeCalibration(); valve = TemperatureHandler::getVentilCalibration();
+    potRaw = TemperatureHandler::getGrydeUncalibratedTemp(); potValue = TemperatureHandler::getGrydeTemp();
+    valveRaw = TemperatureHandler::getVentilUncalibratedTemp(); valveValue = TemperatureHandler::getVentilTemp();
+    canSave = !OTAHandler::maintenanceActive() && !ControlRuntime::maintenance() &&
+      !ProcessHandler::isGasValveOn() && !ProcessHandler::isPumpOn() &&
+      ProcessHandler::getCurrentState() == ProcessHandler::BrewState::IDLE;
+  }
   auto channel = [](const TemperatureCalibration& data, float uncalibrated, float value) {
     float gain, offset;
     TemperatureCalibrationMath::coefficients(data, gain, offset);
@@ -25,12 +38,8 @@ void WebServerHandler::handleCalibrationData() {
     json += ",\"value\":" + (isfinite(value) ? String(value, 3) : String("null"));
     return json + '}';
   };
-  String json = "{\"pot\":" + channel(TemperatureHandler::getGrydeCalibration(),
-      TemperatureHandler::getGrydeUncalibratedTemp(), TemperatureHandler::getGrydeTemp());
-  json += ",\"valve\":" + channel(TemperatureHandler::getVentilCalibration(),
-      TemperatureHandler::getVentilUncalibratedTemp(), TemperatureHandler::getVentilTemp());
-  const bool canSave = !OTAHandler::maintenanceActive() && !ProcessHandler::isGasValveOn() &&
-      ProcessHandler::getCurrentState() == ProcessHandler::BrewState::IDLE;
+  String json = "{\"pot\":" + channel(pot, potRaw, potValue);
+  json += ",\"valve\":" + channel(valve, valveRaw, valveValue);
   json += F(",\"canSave\":"); json += canSave ? "true}" : "false}";
   server.sendHeader("Cache-Control", "no-store");
   server.send(200, "application/json; charset=utf-8", json);
@@ -38,8 +47,8 @@ void WebServerHandler::handleCalibrationData() {
 
 void WebServerHandler::handleSaveCalibration() {
   if (rejectDuringOTA()) return;
-  if (ProcessHandler::getCurrentState() != ProcessHandler::BrewState::IDLE || ProcessHandler::isGasValveOn()) {
-    server.send(409, "text/plain; charset=utf-8", "Stop brygprocessen og sluk gas før kalibrering gemmes");
+  if (ProcessHandler::getCurrentState() != ProcessHandler::BrewState::IDLE || ProcessHandler::isGasValveOn() || ProcessHandler::isPumpOn()) {
+    server.send(409, "text/plain; charset=utf-8", "Stop brygprocessen og sluk gas og pumpe før kalibrering gemmes");
     return;
   }
   auto parseChannel = [&](const char* prefix, TemperatureCalibration& result) {

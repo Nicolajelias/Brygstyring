@@ -1,6 +1,33 @@
 # PT100: kodekontrol og grundlag for PCB-design
 
+**Aktuel driftsrettelse 5. november 2026:** Begge sensorer er monteret. Målinger
+og proces kører nu i en separat 5 ms-opgave, med SNTP i baggrunden og Wi-Fi-
+genforsøg uden systemreset. Manuel gas/pumpe i IDLE/PAUSED er efter brugerens
+instruktion undtaget fra temperaturinterlock; automatisk gas er fortsat spærret
+ved fejl/gamle data. Dette erstatter de tidligere F1-krav om interlock i manuel
+drift. Se [implementering og validering](temperature-robustness-review.md).
+DRDY er nu tilsluttet GPIO6 (gryde) og GPIO7 (ventil). Firmwaren kræver
+HIGH før start, LOW ved færdigmelding og HIGH efter RTD-aflæsning; F3 er
+håndteret for ignoreret start og fastlåst ready-signal. De ældre analyser
+og testresultater nedenfor er historik.
+
 ## Status efter rettelser og tilføjelse af kalibrering
+
+**Hardwareopfølgning 5. november 2026:** Ventilkanalen leverer cirka 24 °C,
+men viste udfald. Gentagne blokerende NTP-forsøg i AP-tilstand er fjernet;
+online forsøg begrænses til ét pr. minut, også efter fejl. Klokkeslætsvisning
+starter ikke netværkskald. Et selvnulstillet 1SHOT-bit ved start accepteres nu,
+mens 70 ms ventetid og kontrol af vedvarende konfigurationsbits bevares.
+Den tidligere påstand om sikker startkvittering er trukket tilbage: uden DRDY
+kan en lydløst ignoreret start med plausibelt gammelt registerindhold ikke
+udelukkes. F3 er derfor kun delvist håndteret. Hosttestene omfatter nu også
+tidlig nulstilling af startbitten og offline måling med manglende grydekanal.
+Buildoplysningerne fra oktober nedenfor er historisk validering.
+Rettelsen er bygget og uploadet til COM10 med verificeret flashhash.
+Efter upload viste 55 sekunders seriel observation en ventiltemperatur paa
+24,01 °C ved opstart, nul ventilfejl og nul NTP-fejl. Den manglende
+grydekanal gav 47 forventede fejl. Dette er en kort funktionstest, ikke
+en dokumentation af maalenoejagtighed eller uafhaengig datafriskhed.
 
 **Modulvalg:** Brugeren har efterfølgende vist et lilla MAX31865-breakout
 med VIN/GND/3V3/CLK/SDO/SDI/CS/DRDY. Carrier-PCB'et planlægges nu med to
@@ -42,9 +69,9 @@ kalibrerings-HTTP-handlere. JavaScript-syntaks, lokale dokumentlinks og
 
 | Fund | Aktuel status |
 | --- | --- |
-| F1 | Central sensorinterlock lukker gas i alle seks driftstilstande; alle gas-ON-veje kontrollerer begge sensorer. Første målefejl spærrer gas. |
+| F1 | Automatisk gas kræver gyldige sensorer og lukkes ved fejl. Manuel gas/pumpe i IDLE/PAUSED er bevidst undtaget efter nyt brugerkrav. |
 | F2 | Minimum 70 ms konverteringsventetid, kontrol af 1SHOT og timeout ved 110 ms. |
-| F3 | Konfiguration og thresholds verificeres; one-shot-start skal kvitteres ved readback før afslutning accepteres. Tidsstempel sættes til konverteringsstart. |
+| F3 | DRDY på GPIO6/7 kræver HIGH–LOW–HIGH pr. konvertering. Ignoreret start, fast HIGH/LOW og manglende nulstilling af ready afvises. Tidsstempel er fortsat konverteringsstart. |
 | F4 | Manuel fault-detection-cyklus før hver måling, settling i begge switchtilstande og kontrol af fault-register. |
 | F5 | Brugeren har bekræftet ESP32-S3-DevKitC-1 N16R8. Boardnavnet er rettet; 16 MB QIO flash og 8 MB OPI PSRAM er bevaret. |
 | F6 | LED-data kan vælges som GPIO48 eller GPIO38 via `BRYG_RGB_LED_GPIO` i platformio.ini. Fysisk boardrevision er ikke oplyst; GPIO48 er bevaret som standard. |

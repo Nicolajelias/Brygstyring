@@ -2,8 +2,6 @@
 #define PROCESS_HANDLER_H
 
 #include <Arduino.h>
-#include <NTPClient.h>
-#include <WiFiUdp.h>
 #include "BrewRecipe.h"
 
 class ProcessHandler {
@@ -59,6 +57,7 @@ public:
   static bool toggleGasValve();
   static bool isPumpOn();
   static bool isGasValveOn();
+  static bool isGasManual();
 
   // Konfigurationsparametre
   static void setHysteresis(float value);
@@ -90,10 +89,6 @@ private:
   static void checkTimeAndNextStep(unsigned long stepTimeSec);
   static void nextStep();
   static String formatEpochTime(unsigned long epoch);
-
-  // NTP
-  static WiFiUDP ntpUDP;
-  static NTPClient timeClient;
 
   // Hardware pins
   static uint8_t pinGas;

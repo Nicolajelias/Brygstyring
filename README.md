@@ -5,7 +5,7 @@ Brygstyring er en ESP32-S3-baseret brygkontroller, der overvåger og styrer mæs
 ## Funktioner
 - Robust, ikke-blokerende temperaturovervågning med to 3-leder PT100-sensorer, fælles SPI-bus, 50 Hz-filter, friskhedskontrol og automatisk geninitialisering ved fejl.
 - Separat ét- eller topunktskalibrering af begge PT100 via **System → Temperaturkalibrering** (`/calibration`), gemt permanent i flash. Se [vejledningen](docs/pt100-calibration.md).
-- Gasinterlock i både manuel og automatisk drift: registrerede sensorfejl og for gamle målinger spærrer gas.
+- Gasinterlock i automatisk drift: sensorfejl og gamle målinger spærrer automatisk gas. Manuel gas/pumpe i Klar/Pause kan betjenes uden temperaturdata.
 - Relækontrol for pumpe og gasventil samt buzzer-alarmer og knap-input til brugerbekræftelser.
 - 128×64 I²C OLED-display med processtatus, tider og temperaturer.
 - Indbygget webserver med status-dashboard, proceskontrol og indstillingsside.
@@ -14,6 +14,12 @@ Brygstyring er en ESP32-S3-baseret brygkontroller, der overvåger og styrer mæs
 - WiFi STA/AP fallback med mDNS (`brygkontrol.local`).
 - RGB status-LED med farvekoder for WiFi/AP og animationsmode under aktiv brygproces.
 - Loginbeskyttet og valideret OTA-firmwareopdatering (`/update`) med rollback.
+
+Temperatur og proces kører i en separat kontrolopgave uafhængigt af web,
+Wi-Fi og internettid. Manuel gas/pumpe i Klar eller Pause kan betjenes selv
+uden gyldige målinger; automatisk gas beholder sensorinterlock. Flashændringer
+kræver stoppet proces og begge udgange OFF. Genstart starter altid IDLE/OFF.
+Se [driftsgennemgang og tests](docs/temperature-robustness-review.md).
 
 ## Hardware
 - `ESP32-S3-DevKitC-1-N16R8` (bekræftet hardware: 16 MB flash og 8 MB OPI PSRAM).
@@ -31,6 +37,8 @@ LED-data vælges med `-DBRYG_RGB_LED_GPIO=48` i `platformio.ini`; brug `38` til 
 |--------------------|-----------------|------------------------|
 | MAX31865 gryde CS  | 4               | `PIN_TEMP_GRYDE`       |
 | MAX31865 ventil CS | 5               | `PIN_TEMP_VENTIL`      |
+| MAX31865 gryde DRDY/RDY | 6 | `PIN_TEMP_GRYDE_DRDY` |
+| MAX31865 ventil DRDY/RDY | 7 | `PIN_TEMP_VENTIL_DRDY` |
 | MAX31865 fælles SCK | 12             | `PIN_TEMP_SCK`         |
 | MAX31865 fælles SDI/MOSI | 13        | `PIN_TEMP_MOSI`        |
 | MAX31865 fælles SDO/MISO | 14        | `PIN_TEMP_MISO`        |
@@ -65,7 +73,7 @@ platformio run --target upload
 Alternativt kan den genererede `.bin` uploades via OTA (`/update`).
 
 ## Første opsætning
-1. Efter første boot skifter enheden til AP-tilstand (`BrygAP`, IP 192.168.4.1).
+1. Efter første boot skifter enheden til AP-tilstand: forbind til `BrygAP` uden adgangskode (2,4 GHz, kanal 1, IP 192.168.4.1).
 2. Besøg `http://192.168.4.1/settings` og indtast WiFi-oplysninger.
 3. Når enheden forbinder til dit netværk, kan UI’et nås via `http://brygkontrol.local/` eller den tildelte IP.
 

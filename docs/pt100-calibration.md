@@ -7,8 +7,9 @@ temperatur fra PT100/MAX31865.
 
 ## Indtastning
 
-1. Stop brygprocessen og sluk gas. Pumpen må gerne cirkulere under kalibreringen.
-   Kalibrering kan kun gemmes i IDLE med gas slukket og uden igangværende OTA.
+1. Stop brygprocessen. Pumpen kan cirkulere, mens referencepunkterne måles,
+   men sluk både gas og pumpe, før kalibreringen gemmes.
+   Lagring kræver IDLE, begge udgange OFF og ingen igangværende OTA.
 2. Anbring den sensor, der kalibreres, og et egnet referencetermometer ved samme
    stabile temperatur. Vent på temperaturudligning. Brug den faktiske reference,
    ikke en antagelse om at kogende vand altid er præcis 100 °C.

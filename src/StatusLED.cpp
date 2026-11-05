@@ -2,12 +2,13 @@
 #include <Arduino.h>
 #include <esp32-hal-rgb-led.h>
 #include <math.h>
+#include <atomic>
 #include "PinConfig.h"
 
 namespace {
   StatusLED::Mode networkMode = StatusLED::Mode::Off;
-  bool processActive = false;
-  bool awaitingConfirmation = false;
+  std::atomic<bool> processActive{false};
+  std::atomic<bool> awaitingConfirmation{false};
   bool ledReady = false;
 
   uint8_t maxBrightness = 64;
@@ -74,12 +75,7 @@ void StatusLED::setProcessActive(bool active) {
 }
 
 void StatusLED::setAwaitingConfirmation(bool active) {
-  if (awaitingConfirmation == active) {
-    return;
-  }
   awaitingConfirmation = active;
-  blinkOn = false;
-  lastBlinkToggle = 0;
 }
 
 void StatusLED::update() {
@@ -87,9 +83,12 @@ void StatusLED::update() {
     return;
   }
 
+  static bool wasAwaiting = false;
+  const bool awaiting = awaitingConfirmation.load();
+  if (awaiting != wasAwaiting) { blinkOn = false; lastBlinkToggle = 0; wasAwaiting = awaiting; }
   unsigned long now = millis();
 
-  if (awaitingConfirmation) {
+  if (awaiting) {
     if (now - lastBlinkToggle >= 250) {
       lastBlinkToggle = now;
       blinkOn = !blinkOn;

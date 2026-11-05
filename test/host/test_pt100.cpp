@@ -6,6 +6,11 @@
 #include "EEPROM.h"
 #include "StatusLED.h"
 #include "WebServer.h"
+#include "WiFi.h"
+#include "ControlRuntime.h"
+#include "ClockService.h"
+#include "ProcessStorage.h"
+#include "freertos/FreeRTOS.h"
 // Select all process states without driving long brewing sequences in a unit test.
 #define private public
 #include "ProcessHandler.h"
@@ -15,10 +20,17 @@
 #include <iostream>
 
 uint32_t mockNow = 0;
+bool mockWiFiConnected = false;
+unsigned mockTaskTicks = 0;
+void (*mockControlTask)(void*) = nullptr;
+unsigned long mockEpoch = 0;
+namespace ClockService { bool synchronized() {return mockEpoch != 0;} unsigned long epoch() {return mockEpoch;} }
+WiFiMock WiFi;
 SerialMock Serial;
 SPIClass SPI;
 std::array<MockChip, 64> mockChips;
 std::vector<unsigned char> Preferences::blob;
+std::map<std::string, std::vector<unsigned char>> Preferences::records;
 bool Preferences::failWrites = false;
 EEPROMMock EEPROM;
 WebServer WebServerHandler::server(80);
@@ -29,6 +41,16 @@ bool WebServerHandler::rejectDuringOTA() {
   server.send(503, "text/plain", "OTA"); return true;
 }
 int mockPins[64] = {};
+int digitalRead(int pin) {
+  if (pin == 6 || pin == 7) {
+    auto& chip = mockChips[pin - 2];
+    chip.tick();
+    if (chip.stuckLow) return LOW;
+    if (chip.disconnected || chip.stuckHigh) return HIGH;
+    return chip.ready ? LOW : HIGH;
+  }
+  return mockPins[pin];
+}
 void digitalWrite(int pin, int level) {
   mockPins[pin] = level;
   if (pin == 4 || pin == 5) {
@@ -43,12 +65,14 @@ Config EEPROMHandler::getConfig() {
   return config;
 }
 void StatusLED::setAwaitingConfirmation(bool) {}
+void StatusLED::setProcessActive(bool) {}
 
 void advance(uint32_t ms) {
   for (uint32_t i = 0; i < ms; ++i) { ++mockNow; TemperatureHandler::readTemperatures(); }
 }
 void reset(bool eraseCalibration = true) {
-  mockNow = 0; SPI.selected = -1;
+  mockNow = 0; SPI.selected = -1; mockEpoch = 0;
+  ControlRuntime::leaveMaintenance();
   mockChips = {};
   std::fill(std::begin(mockPins), std::end(mockPins), HIGH);
   Preferences::failWrites = false;
@@ -64,6 +88,25 @@ void validReadings() {
 void expectOff() { assert(!ProcessHandler::isGasValveOn() && mockPins[17] == LOW); }
 
 int main() {
+  reset();
+  mockChips[4].disconnected = true;
+  for (int i = 0; i < 10000; ++i) {
+    advance(1);
+    ProcessHandler::update(NAN, TemperatureHandler::getVentilTemp());
+    ProcessHandler::getFormattedTime();
+  }
+  assert(TemperatureHandler::isVentilValid());
+  assert(TemperatureHandler::getVentilAgeMs() < 1200);
+  assert(ProcessHandler::getFormattedTime() == "--:--:--");
+  // Actual periodic task continues with no UI, network or clock service calls.
+  assert(ControlRuntime::begin());
+  mockTaskTicks = 12000; // 60 seconds, no web loop running
+  try { mockControlTask(nullptr); } catch (TaskFinished&) {}
+  assert(TemperatureHandler::isVentilValid());
+  assert(TemperatureHandler::getVentilAgeMs() < 1200);
+  assert(ControlRuntime::metrics().maxGapMs <= 5);
+  assert(ControlRuntime::metrics().cycles == 12000);
+  std::cout << "PASS actual control task: 60 s without UI/network/time, missing pot, fresh valve\n";
   static_assert(sizeof(unsigned long) == 4, "Tests require 32-bit millis arithmetic, as on ESP32");
   float gain, offset;
   TemperatureCalibration one{1, 20, 21, 100, 100};
@@ -82,6 +125,7 @@ int main() {
   std::cout << "PASS calibration math and invalid inputs\n";
 
   reset();
+  assert(ProcessHandler::toggleGasValve());
   assert(!ProcessHandler::toggleGasValve()); expectOff();
   advance(103);  // conversion started at 38 ms: 65 ms has elapsed
   assert(!TemperatureHandler::isGrydeValid());
@@ -105,25 +149,40 @@ int main() {
     assert(!TemperatureHandler::isVentilValid());
     assert(TemperatureHandler::isGrydeValid());
     ProcessHandler::update(TemperatureHandler::getGrydeTemp(), TemperatureHandler::getVentilTemp());
-    expectOff();
+    if (state == ProcessHandler::BrewState::IDLE || state == ProcessHandler::BrewState::PAUSED) {
+      assert(ProcessHandler::isGasValveOn() && ProcessHandler::isGasManual());
+      assert(!ProcessHandler::toggleGasValve()); expectOff();
+      assert(ProcessHandler::togglePump());
+      assert(!ProcessHandler::togglePump());
+    } else expectOff();
     ProcessHandler::gasControl(true); expectOff();
   }
-  std::cout << "PASS gas interlock in all six process states and every ON path\n";
+  std::cout << "PASS automatic gas interlock, manual gas and pump unaffected in IDLE/PAUSED\n";
 
   reset(); validReadings(); assert(ProcessHandler::toggleGasValve());
   mockNow += 5001;
-  ProcessHandler::enforceTemperatureSafety(); expectOff();
+  ProcessHandler::enforceTemperatureSafety();
+  assert(ProcessHandler::isGasValveOn() && ProcessHandler::isGasManual());
   assert(!TemperatureHandler::isGrydeValid());
-  std::cout << "PASS stale readings close manual gas\n";
+  assert(!ProcessHandler::toggleGasValve()); expectOff();
+  assert(ProcessHandler::toggleGasValve()); // stale data cannot block ON either
+  ProcessHandler::startMashing(); expectOff();
+  assert(ProcessHandler::getCurrentState() == ProcessHandler::BrewState::IDLE);
+  ProcessHandler::currentState = ProcessHandler::BrewState::PAUSED;
+  assert(ProcessHandler::toggleGasValve());
+  ProcessHandler::resumeProcess(); expectOff();
+  assert(ProcessHandler::getCurrentState() == ProcessHandler::BrewState::PAUSED);
+  std::cout << "PASS stale readings preserve manual gas; automatic start/resume reject stale data\n";
 
-  reset(); validReadings();
-  const auto beforeAge = TemperatureHandler::getGrydeAgeMs();
-  mockChips[4].ignoreStart = true;
-  advance(1000);
+  reset();
+  mockChips[4].clearStartImmediately = true;
+  advance(103);
   assert(!TemperatureHandler::isGrydeValid());
-  assert(TemperatureHandler::getGrydeAgeMs() > beforeAge);
+  advance(5);
+  assert(TemperatureHandler::isGrydeValid());
   assert(TemperatureHandler::isVentilValid());
-  mockChips[4].ignoreStart = false; advance(1000);
+  assert(mockChips[4].earlyReads == 0);
+  advance(1000);
   assert(TemperatureHandler::isGrydeValid());
   reset(); mockChips[4].neverFinish = true; advance(149);
   assert(TemperatureHandler::getGrydeFailureCount() == 1);
@@ -132,7 +191,28 @@ int main() {
   assert(TemperatureHandler::getGrydeFailureCount() == 1);
   reset(); mockChips[4].disconnected = true; advance(1100);
   assert(!TemperatureHandler::isGrydeValid() && TemperatureHandler::isVentilValid());
-  std::cout << "PASS missing command, stale register, conversion/fault timeout, disconnection, recovery\n";
+  std::cout << "PASS self-clearing start bit, full conversion wait, timeout and disconnection\n";
+
+  reset(); validReadings();
+  mockChips[4].ignoreStart = true; advance(1100);
+  assert(!TemperatureHandler::isGrydeValid() && TemperatureHandler::isVentilValid());
+  assert(TemperatureHandler::grydeDiagnostics().samples == 1);
+  assert(!strcmp(TemperatureHandler::grydeDiagnostics().lastError,"DRDY completion timeout"));
+  mockChips[4].ignoreStart = false; advance(1000);
+  assert(TemperatureHandler::isGrydeValid());
+  for (int cs : {4,5}) {
+    reset(); mockChips[cs].stuckHigh = true; advance(150);
+    assert(cs == 4 ? !TemperatureHandler::isGrydeValid() : !TemperatureHandler::isVentilValid());
+    reset(); mockChips[cs].stuckLow = true; advance(150);
+    assert(cs == 4 ? !TemperatureHandler::isGrydeValid() : !TemperatureHandler::isVentilValid());
+    reset(); mockChips[cs].ignoreReadyClear = true; advance(150);
+    assert(cs == 4 ? !TemperatureHandler::isGrydeValid() : !TemperatureHandler::isVentilValid());
+    assert(!strcmp((cs == 4 ? TemperatureHandler::grydeDiagnostics() : TemperatureHandler::ventilDiagnostics()).lastError,
+                   "DRDY not HIGH after RTD read"));
+  }
+  reset(); validReadings(); advance(5000);
+  assert(TemperatureHandler::grydeDiagnostics().samples == 6); // identical temperature is legitimate
+  std::cout << "PASS DRDY: ignored start with stale plausible data, stuck HIGH/LOW, failed clear, recovery, constant temperature\n";
 
   reset(); validReadings();
   assert(TemperatureHandler::saveCalibration(one, two));
@@ -210,4 +290,35 @@ int main() {
   assert(web.responseCode == 200 && web.response.find("\"uncalibrated\":null") != String::npos);
   assert(web.response.find("\"canSave\":true") != String::npos);
   std::cout << "PASS real HTTP handlers: validation, process/gas/OTA guards, NVS error, per-channel reset, JSON\n";
+  reset();
+  // No flash writes from process state transitions or when an output is ON.
+  Preferences::records.clear();
+  ProcessHandler::stopProcess();
+  assert(Preferences::records.empty());
+  mockNow = 2000;
+  assert(ProcessHandler::toggleGasValve());
+  ProcessStorage::flush(); assert(Preferences::records.empty());
+  assert(!TemperatureHandler::saveCalibration(one,two));
+  assert(!ControlRuntime::enterMaintenance());
+  ProcessHandler::stopProcess();
+  assert(ControlRuntime::enterMaintenance());
+  assert(!ProcessHandler::toggleGasValve());
+  assert(!ProcessHandler::togglePump());
+  ControlRuntime::leaveMaintenance();
+  mockNow += 2000; ProcessStorage::flush();
+  assert(!Preferences::records["brew-process"].empty());
+  assert(Preferences::blob.empty()); // separate from calibration
+  ProcessStorage::Record saved;
+  ProcessStorage::begin(); assert(ProcessStorage::load(saved));
+  assert(saved.state == 0);
+  // Time corrections never change elapsed process durations.
+  reset(); validReadings(); ProcessHandler::startBoiling();
+  assert(ProcessHandler::isGasValveOn());
+  mockEpoch = 1800000000; mockNow += 2000;
+  assert(ProcessHandler::getRemainingTime() == 3598);
+  mockEpoch = 1700000000; mockNow += 1000;
+  assert(ProcessHandler::getRemainingTime() == 3597);
+  mockEpoch = 0; ProcessHandler::stopProcess();
+  std::cout << "PASS maintenance exclusion, deferred independent storage, monotonic process timers\n";
+
 }

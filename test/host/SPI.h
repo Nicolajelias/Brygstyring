@@ -8,10 +8,14 @@ struct MockChip {
   uint16_t nextRaw = 19076;  // approximately 65 C, includes fault bit at bit zero
   uint32_t conversionStarted = 0;
   bool disconnected = false, ignoreStart = false, neverFinish = false, faultHangs = false;
+  bool clearStartImmediately = false, converting = false;
+  bool ready = false, stuckHigh = false, stuckLow = false, ignoreReadyClear = false;
   uint8_t injectedFault = 0;
   unsigned starts = 0, earlyReads = 0;
   void tick() {
-    if ((registers[0] & 0x20) && !neverFinish && uint32_t(mockNow - conversionStarted) >= 66) {
+    if (converting && !neverFinish && uint32_t(mockNow - conversionStarted) >= 66) {
+      converting = false;
+      ready = true;
       registers[0] &= ~0x20;
       registers[1] = nextRaw >> 8; registers[2] = nextRaw & 255;
     }
@@ -27,6 +31,10 @@ struct MockChip {
       if (value & 0x20) {
         if (ignoreStart) return;
         conversionStarted = mockNow; ++starts;
+        converting = true;
+        if (clearStartImmediately) value &= ~0x20;
+      } else {
+        converting = false;
       }
     }
     registers[address] = value;
@@ -34,7 +42,8 @@ struct MockChip {
   uint8_t read(uint8_t address) {
     tick();
     if (disconnected) return 0xFF;
-    if (address == 1 && (registers[0] & 0x20)) ++earlyReads;
+    if (address == 1 && converting) ++earlyReads;
+    if ((address == 1 || address == 2) && !ignoreReadyClear) ready = false;
     return registers[address];
   }
 };

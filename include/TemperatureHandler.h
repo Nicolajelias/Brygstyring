@@ -6,6 +6,9 @@
 
 class TemperatureHandler {
 public:
+  struct Diagnostics { uint32_t samples, failures; const char* lastError; };
+  static Diagnostics grydeDiagnostics();
+  static Diagnostics ventilDiagnostics();
   static void begin(uint8_t grydePin, uint8_t ventilPin);
   static void readTemperatures();
   static float getGrydeTemp();
