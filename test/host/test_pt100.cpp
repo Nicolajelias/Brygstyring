@@ -66,6 +66,7 @@ Config EEPROMHandler::getConfig() {
 }
 void StatusLED::setAwaitingConfirmation(bool) {}
 void StatusLED::setProcessActive(bool) {}
+void StatusLED::notify() {}
 
 void advance(uint32_t ms) {
   for (uint32_t i = 0; i < ms; ++i) { ++mockNow; TemperatureHandler::readTemperatures(); }

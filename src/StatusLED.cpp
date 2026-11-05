@@ -3,10 +3,13 @@
 #include <esp32-hal-rgb-led.h>
 #include <math.h>
 #include <atomic>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include "PinConfig.h"
 
 namespace {
-  StatusLED::Mode networkMode = StatusLED::Mode::Off;
+  std::atomic<StatusLED::Mode> networkMode{StatusLED::Mode::Off};
+  std::atomic<uint32_t> notificationUntil{0};
   std::atomic<bool> processActive{false};
   std::atomic<bool> awaitingConfirmation{false};
   bool ledReady = false;
@@ -44,6 +47,13 @@ namespace {
       clamp(lroundf(baseB * scale))
     );
   }
+  void ledTask(void*) {
+    TickType_t wake = xTaskGetTickCount();
+    for (;;) {
+      StatusLED::update();
+      vTaskDelayUntil(&wake, pdMS_TO_TICKS(20));
+    }
+  }
 }
 
 void StatusLED::begin(uint8_t pin, uint8_t brightness) {
@@ -60,15 +70,15 @@ void StatusLED::begin(uint8_t pin, uint8_t brightness) {
   networkMode = StatusLED::Mode::Off;
   processActive = false;
   showColor(0, 0, 0);
+  if (xTaskCreatePinnedToCore(ledTask, "status-led", 2048, nullptr, 1, nullptr, 0) != pdPASS)
+    Serial.println("[LED] Could not start visual alarm task");
 }
 
 void StatusLED::setNetworkMode(StatusLED::Mode mode) {
-  if (networkMode != mode) {
-    blinkOn = false;
-    lastBlinkToggle = 0;
-  }
   networkMode = mode;
 }
+
+void StatusLED::notify() { notificationUntil.store((uint32_t(millis()) + 1000U) | 1U); }
 
 void StatusLED::setProcessActive(bool active) {
   processActive = active;
@@ -83,10 +93,19 @@ void StatusLED::update() {
     return;
   }
 
-  static bool wasAwaiting = false;
-  const bool awaiting = awaitingConfirmation.load();
-  if (awaiting != wasAwaiting) { blinkOn = false; lastBlinkToggle = 0; wasAwaiting = awaiting; }
   unsigned long now = millis();
+  uint32_t until = notificationUntil.load();
+  if (until && static_cast<int32_t>(uint32_t(now) - until) >= 0) {
+    notificationUntil.compare_exchange_strong(until, 0);
+    until = notificationUntil.load();
+  }
+  static bool wasAwaiting = false;
+  static Mode previousMode = Mode::Off;
+  const Mode mode = networkMode.load();
+  const bool awaiting = awaitingConfirmation.load() || until != 0;
+  if (awaiting != wasAwaiting || mode != previousMode) {
+    blinkOn = true; lastBlinkToggle = now; wasAwaiting = awaiting; previousMode = mode;
+  }
 
   if (awaiting) {
     if (now - lastBlinkToggle >= 250) {
@@ -106,7 +125,7 @@ void StatusLED::update() {
     return;
   }
 
-  switch (networkMode) {
+  switch (mode) {
     case StatusLED::Mode::Off:
       showColor(0, 0, 0);
       break;

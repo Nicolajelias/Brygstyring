@@ -11,6 +11,7 @@ public:
   static void setNetworkMode(Mode mode);
   static void setProcessActive(bool active);
   static void setAwaitingConfirmation(bool active);
+  static void notify(); // One second of visual indication, without acknowledgement.
   static void update();
 };
 

@@ -39,6 +39,7 @@ void setup() {
   OTAHandler::begin();
   WebServerHandler::begin();
   DisplayHandler::begin();
+  StatusLED::notify(); // Brief visual check when startup has completed.
   Serial.println("==== Opstart gennemfoert ====");
 }
 void loop() {
@@ -49,7 +50,6 @@ void loop() {
   DisplayHandler::update(TemperatureHandler::getGrydeTemp(), TemperatureHandler::getVentilTemp(),
     ProcessHandler::isPumpOn() || (millis() / 500 % 2),
     ProcessHandler::getProcessStep(), ProcessHandler::getRemainingTime());
-  StatusLED::update();
   RuntimeLog.drain();
   static unsigned long lastDiagnostics = 0;
   if (millis() - lastDiagnostics >= 10000) {

@@ -8,6 +8,7 @@
 #include "RuntimeLog.h"
 #include "ClockService.h"
 #include "ProcessStorage.h"
+#include "PinConfig.h"
 
 // Definer BOILHEATUP-tiden (i sekunder). Her er den sat til 10 minutter.
 static unsigned long boilHeatupTime = 10 * 60;
@@ -23,11 +24,13 @@ constexpr uint32_t BUZZER_FREQUENCY_HZ = 750;
 constexpr uint8_t BUZZER_RESOLUTION_BITS = 10;
 
   void buzzerOn() {
+    if (!BUZZER_ENABLED) return;
     ledcWriteTone(BUZZER_CHANNEL, BUZZER_FREQUENCY_HZ);
     ledcWrite(BUZZER_CHANNEL, 256); // ca. 25% duty for blødere lyd
   }
 
   void buzzerOff() {
+    if (!BUZZER_ENABLED) return;
     ledcWrite(BUZZER_CHANNEL, 0);
   }
 }
@@ -142,8 +145,11 @@ void ProcessHandler::begin(uint8_t gasP, uint8_t pumpP, uint8_t buzzerP, uint8_t
   digitalWrite(pinGas, LOW);
   digitalWrite(pinPump, LOW);
 
-  ledcSetup(BUZZER_CHANNEL, BUZZER_FREQUENCY_HZ, BUZZER_RESOLUTION_BITS);
-  ledcAttachPin(pinBuzzer, BUZZER_CHANNEL);
+  digitalWrite(pinBuzzer, LOW);
+  if (BUZZER_ENABLED) {
+    ledcSetup(BUZZER_CHANNEL, BUZZER_FREQUENCY_HZ, BUZZER_RESOLUTION_BITS);
+    ledcAttachPin(pinBuzzer, BUZZER_CHANNEL);
+  }
   buzzerOff();
 
   manualGas = false;
@@ -259,6 +265,7 @@ void ProcessHandler::update(float tGryde, float tVentil) {
           StatusLED::setAwaitingConfirmation(true);
           buzzerOn();
           pulseUntil = millis() + 200;
+          StatusLED::notify();
           pulseActive = true;
           buzzerActive = false;
           saveProcessState();

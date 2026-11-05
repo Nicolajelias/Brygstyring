@@ -43,6 +43,15 @@ sensorfejltest er fortsat separate punkter i idriftsaettelsesplanen.
 
 ## Samlet GPIO-plan
 
+**Aktuelt valg: RGB-lys i stedet for buzzer.** Ingen ekstra komponenter eller
+ledninger er noedvendige til onboard-LED'en paa GPIO48. Buzzerstikket skal
+vaere frakoblet; GPIO21 holdes LOW, og PWM er deaktiveret med
+`BUZZER_ENABLED = false`. Buzzer-driveren og R6 nedenfor er kun relevante,
+hvis lyd senere genaktiveres med et passende drivertrin. LED-alarm er
+roed/blaa med 250 ms farveskift og har prioritet over netvaerks-/procesfarver.
+Kvitteringsalarmer fortsaetter til kvittering eller processtop. Opstart og
+det korte signal ved kogeforvarmning vises i cirka et sekund.
+
 | ESP32-S3 | Forbindelse | Retning set fra ESP32 | Bemaerkning |
 | --- | --- | --- | --- |
 | GPIO4 | MAX31865 gryde CS | Ud | Aktiv LOW; indbygget pull-up, R1/R2 udelades |

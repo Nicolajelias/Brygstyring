@@ -22,6 +22,16 @@ kræver stoppet proces og begge udgange OFF. Genstart starter altid IDLE/OFF.
 Se [driftsgennemgang og tests](docs/temperature-robustness-review.md).
 
 ## Hardware
+
+**Lydløs alarm:** Onboard-RGB-LED'en erstatter aktuelt buzzeren. Rød/blå blink
+med farveskift hvert 250 ms angiver, at processen venter på bekræftelse, eller
+at en humletilsætning skal kvitteres. Bekræft med den eksisterende knap eller
+webbet, hvor kvittering tilbydes. Opstart og det korte signal ved begyndelsen
+af kogeforvarmning giver ét sekund rød/blå blink. Alarmen har prioritet over
+normal grøn processtatus og blå Wi-Fi-status. LED'en opdateres i en separat
+opgave, uafhængigt af HTTP-ventetid. Buzzerstikket efterlades frakoblet;
+GPIO21 holdes LOW (`BUZZER_ENABLED = false` i `PinConfig.h`).
+
 - `ESP32-S3-DevKitC-1-N16R8` (bekræftet hardware: 16 MB flash og 8 MB OPI PSRAM).
 - 2 × PT100 temperatursensor, 3-leder, IEC 60751 (100 ohm ved 0 °C).
 - 2 × MAX31865 til PT100, hver med 430 ohm præcisionsreference og korrekt 3-lederforbindelse.
