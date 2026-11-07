@@ -4,6 +4,7 @@ Windows: uses PlatformIO's 32-bit MinGW toolchain (same unsigned-long width as E
 Run after `platformio run` has installed Adafruit MAX31865 1.6.2.
 """
 import os
+import sys
 from pathlib import Path
 import subprocess
 
@@ -18,6 +19,7 @@ env = dict(os.environ)
 env['PATH'] = str(compiler_dir) + os.pathsep + env.get('PATH', '')
 subprocess.run([
     str(compiler), '-std=c++14', '-DARDUINO=10800', '-Wall', '-Wextra',
+    '-DBRYG_POT_ONLY=' + ('1' if '--pot-only' in sys.argv else '0'),
     '-Itest/host', '-Iinclude', '-I' + str(library),
     'test/host/test_pt100.cpp', 'src/TemperatureHandler.cpp', 'src/ProcessHandler.cpp',
     'src/TemperatureCalibrationWeb.cpp', 'src/ControlRuntime.cpp', 'src/ProcessStorage.cpp',

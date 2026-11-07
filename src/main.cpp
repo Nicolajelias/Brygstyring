@@ -34,6 +34,12 @@ void setup() {
     for (;;) delay(1000);
   }
   RecipeManager::begin(); RecipeManager::restoreActive();
+  if (xTaskCreatePinnedToCore([](void*) {
+        for (;;) { ProcessStorage::flush(); vTaskDelay(pdMS_TO_TICKS(100)); }
+      }, "brew-storage", 4096, nullptr, 1, nullptr, 0) != pdPASS) {
+    Serial.println("FATAL: checkpoint task unavailable; outputs remain OFF");
+    for (;;) delay(1000);
+  }
   WiFiHandler::begin();
   ClockService::begin();
   OTAHandler::begin();
@@ -46,7 +52,6 @@ void loop() {
   WiFiHandler::handleWiFi();
   WebServerHandler::handleClient();
   OTAHandler::update(millis());
-  ProcessStorage::flush();
   DisplayHandler::update(TemperatureHandler::getGrydeTemp(), TemperatureHandler::getVentilTemp(),
     ProcessHandler::isPumpOn() || (millis() / 500 % 2),
     ProcessHandler::getProcessStep(), ProcessHandler::getRemainingTime());

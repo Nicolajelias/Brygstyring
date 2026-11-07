@@ -19,6 +19,7 @@ public:
     static void handleSaveSettings();
     static void handleResetSettings();
     static void handleStatus();
+    static void handleUseValveTemperature();
     static void handleTogglePump();
     static void handleToggleGasValve();
     static void handleRecipesPage();
@@ -36,6 +37,7 @@ public:
     static void handleStopProcess();
     static void handlePauseProcess();
     static void handleResumeProcess();
+    static void handleContinueBlackout();
 
 private:
     static bool rejectDuringOTA();

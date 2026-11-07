@@ -21,8 +21,6 @@ void controlTask(void*) {
     if (!watchdogReady) RuntimeLog.println("[Control] Task watchdog registration failed");
   }
   TickType_t wake = xTaskGetTickCount();
-  unsigned long pressedAt = 0;
-  bool handled = false;
   for (;;) {
     const unsigned long started = millis();
     {
@@ -33,12 +31,7 @@ void controlTask(void*) {
       ProcessHandler::enforceTemperatureSafety();
       if (!inMaintenance) {
         ProcessHandler::update(TemperatureHandler::getGrydeTemp(), TemperatureHandler::getVentilTemp());
-        if (ProcessHandler::getCurrentState() == ProcessHandler::BrewState::IDLE && digitalRead(PIN_BUTTON) == LOW) {
-          if (!pressedAt) pressedAt = millis();
-          else if (!handled && millis() - pressedAt >= 3000) {
-            ProcessHandler::startMashing(); handled = true;
-          }
-        } else { pressedAt = 0; handled = false; }
+
       }
       const auto state = ProcessHandler::getCurrentState();
       StatusLED::setProcessActive(state != ProcessHandler::BrewState::IDLE && state != ProcessHandler::BrewState::PAUSED);

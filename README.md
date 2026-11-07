@@ -121,3 +121,23 @@ Konfigurationen (WiFi, temperaturparametre osv.) gemmes i ESP32’ens interne EE
 
 ## Licens
 Angiv licensinformation her (juster efter projektets behov).
+
+
+### Blackout og fysisk knap
+
+Efter genstart kan et gemt igangvaerende forloeb gendannes via **Fortsaet**
+paa websiden. OLED viser BLACKOUT. Gas og pumpe er OFF, indtil Fortsaet er
+accepteret med gyldig internettid og gyldige tilvalgte sensorer. Kontrolpunktet
+maa vaere under en time gammelt ved foerste tidssynkronisering. Timeren
+korrigeres for tiden siden kontrolpunktet; en manuel pause forbliver pauset.
+Udlobne trin afventer trinbekraeftelse med slukkede udgange.
+
+**Langt tryk (3 sekunder)** nulstiller og starter maeskning forfra, ogsaa
+under normal drift og ved BLACKOUT. Det genoptager ikke det afbrudte trin.
+Ved sensorfejl forbliver ny start blokeret. Kort tryk kan ikke genoptage
+BLACKOUT; normale korte kvitteringer behandles ved slip af knappen.
+
+Kontrolpunkter skrives ved tilstandsskift og hvert 30. sekund. Graensen paa
+en time er konservativ og inkluderer kontrolpunktinterval og boot/NTP-ventetid.
+Processer fra gammel firmware uden disse kontrolpunkter kan ikke gendannes.
+Se `docs/temperature-robustness-review.md` for detaljer og validering.

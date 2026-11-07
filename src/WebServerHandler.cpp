@@ -1,4 +1,6 @@
 #include "ControlRuntime.h"
+#include "ProcessStorage.h"
+#include "TemperatureControlPolicy.h"
 #include <esp_system.h>
 #include "WebServerHandler.h"
 #include "EEPROMHandler.h"
@@ -21,7 +23,7 @@ const char DASHBOARD_PAGE[] PROGMEM = R"HTML(<!doctype html>
 <meta name="theme-color" content="#110d09"><title>Stouby Bryglaug</title>
 <style>
 :root{color-scheme:dark;--bg:#100c08;--panel:#1d1711;--panel2:#271e15;--line:#453522;--text:#f7ead8;--muted:#b9a58c;--amber:#efad3e;--gold:#ffd27b;--green:#4dc486;--red:#ef6470;--blue:#70b9dd;font:16px system-ui,-apple-system,Segoe UI,sans-serif}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 75% -10%,#5a3518 0,transparent 34rem),var(--bg);color:var(--text)}main,nav{width:min(1100px,calc(100% - 2rem));margin:auto}nav{display:flex;align-items:center;gap:.6rem;padding:1.1rem 0}nav strong{font-family:Georgia,serif;font-size:1.2rem;letter-spacing:.04em;margin-right:auto;color:var(--gold)}nav a{color:var(--muted);text-decoration:none;padding:.5rem .7rem;border-radius:.55rem}nav a:hover{background:#ffffff0d;color:white}.hero,.panel{border:1px solid var(--line);background:linear-gradient(145deg,#211910ed,#17120ded);box-shadow:0 16px 50px #0005;border-radius:1rem}.hero{display:grid;grid-template-columns:1fr auto;gap:1rem;align-items:center;padding:1.25rem 1.4rem}.eyebrow{text-transform:uppercase;letter-spacing:.15em;font-size:.7rem;color:var(--amber)}h1{font:clamp(2rem,7vw,3.5rem)/1 Georgia,serif;margin:.25rem 0}.subtitle{color:var(--muted)}.badge{display:inline-flex;gap:.45rem;align-items:center;background:#3c2d1d;padding:.45rem .75rem;border-radius:99px;font-weight:700}.badge:before{content:"";width:.55rem;height:.55rem;border-radius:50%;background:var(--amber);box-shadow:0 0 12px var(--amber)}.badge.ok:before{background:var(--green);box-shadow:0 0 12px var(--green)}.badge.bad:before{background:var(--red);box-shadow:0 0 12px var(--red)}.alarm{margin:.85rem 0 0;padding:.8rem 1rem;background:#5b2025;border:1px solid #b64751;border-radius:.75rem;color:#ffdadd;font-weight:650}.hidden{display:none!important}.panel{padding:1rem;margin:1rem 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:.75rem}.metric{min-height:112px;padding:.9rem;background:linear-gradient(145deg,var(--panel2),#19130e);border:1px solid #3a2b1e;border-radius:.8rem}.metric small{display:block;color:var(--muted);margin-bottom:.4rem}.metric strong{font-size:1.6rem;font-variant-numeric:tabular-nums}.metric span{display:block;font-size:.8rem;color:#a99479;margin-top:.3rem}.metric.fault{border-color:var(--red);background:#35191a}.progress{height:.65rem;background:#342719;border-radius:2rem;overflow:hidden;margin-top:.8rem}.progress span{display:block;width:0;height:100%;background:linear-gradient(90deg,#d78125,var(--gold));transition:width .4s}.panel h2{font:1.4rem Georgia,serif;margin:.15rem 0 .9rem}.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:.6rem}.btn{border:1px solid #624a2b;background:#342719;color:var(--text);border-radius:.65rem;padding:.8rem;font:650 .9rem system-ui;cursor:pointer;transition:.15s}.btn:hover{transform:translateY(-1px);background:#46331f}.btn.primary{background:#9b5d1c;border-color:#d28a31}.btn.stop{background:#702c31;border-color:#b64a53}.btn:disabled{opacity:.4;cursor:not-allowed;transform:none}.details{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.6rem}.detail{display:flex;justify-content:space-between;gap:1rem;border-bottom:1px solid #3b2d20;padding:.55rem 0}.detail span:first-child{color:var(--muted)}.settings{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.7rem}.field label{display:block;color:var(--muted);font-size:.8rem;margin-bottom:.3rem}.field input{width:100%;background:#120e0a;color:white;border:1px solid #543e29;border-radius:.55rem;padding:.7rem;font:inherit}.form-actions{display:flex;gap:.6rem;align-items:center;margin-top:.8rem}.toast{position:fixed;right:1rem;bottom:1rem;max-width:calc(100vw - 2rem);padding:.8rem 1rem;border:1px solid #785a38;background:#261c13;border-radius:.7rem;box-shadow:0 10px 35px #0008}.toast.error{border-color:var(--red)}footer{text-align:center;color:#806f5c;padding:1rem;font-size:.8rem}@media(max-width:580px){.hero{grid-template-columns:1fr}.metric strong{font-size:1.35rem}nav a{font-size:.8rem;padding:.4rem}.controls{grid-template-columns:1fr 1fr}}
-</style></head><body><nav><strong>STOUBY BRYGLAUG</strong><a href="/">Brygning</a><a href="/recipes">Opskrifter</a><a href="/settings">System</a></nav><main>
+</style></head><body><nav><strong>STOUBY BRYGLAUG</strong><a href="/">Brygning</a><a href="/recipes">Opskrifter</a><a href="/settings">System</a></nav><main><div id="storageWarning" class="alarm hidden">Procesdata kunne ikke gemmes. Genoptagelse efter strømudfald kan mangle.</div><section id="blackoutPanel" class="alarm hidden"><strong id="blackoutMessage"></strong><p id="blackoutDetails"></p><button id="continueBlackout" class="btn primary" data-action="continueBlackout">Fortsæt</button><button class="btn stop" data-action="stopProcess">Afslut proces</button><p>Langt tryk (3 sek.) paa knappen nulstiller og starter forfra.</p></section><div id="potOnlyNotice" class="alarm hidden">Midlertidig drift: Kun grydesensoren styrer opvarmningen. Ventiltemperatur og ventil-offset beskytter ikke processen.</div>
 <section class="hero"><div><div class="eyebrow">Aktuelt procestrin</div><h1 id="step">Forbinder…</h1><div class="subtitle"><span id="process">Henter status</span> · <span id="clock">--:--:--</span></div><div class="progress"><span id="progress"></span></div></div><span id="health" class="badge">Starter</span></section>
 <div id="sensorAlarm" class="alarm hidden">Temperaturdata mangler eller er for gammel. Automatisk gas er spærret. Manuel gas og pumpe kan stadig betjenes i Klar/Pause.</div>
 <div id="hopAlarm" class="alarm hidden">Tilsæt humle nu: <strong id="hopAlarmName"></strong> <button class="btn" data-action="ackHop">Kvittér</button></div>
@@ -36,7 +38,7 @@ const $=id=>document.getElementById(id), actions=document.querySelectorAll('[dat
 function toast(message,error=false){const e=$('toast');e.textContent=message;e.className='toast'+(error?' error':'');setTimeout(()=>e.className='toast hidden',3500)}
 const temp=v=>v===null?'--.- °C':Number(v).toFixed(1)+' °C', age=v=>v===null?'ingen gyldig måling':v<1500?'opdateret nu':'opdateret for '+Math.round(v/1000)+' s siden';
 function setInput(id,value){const e=$(id);if(document.activeElement!==e)e.value=value}
-function render(d){const sensorsOk=d.sensors.pot.valid&&d.sensors.valve.valid,healthy=d.sensors.pot.healthy&&d.sensors.valve.healthy;$('step').textContent=d.processStep;$('process').textContent=d.processStatus;$('clock').textContent=d.currentTime;$('health').textContent=sensorsOk?(healthy?'Sensorer OK':'Sensor retry'):'Sensorfejl';$('health').className='badge '+(healthy?'ok':sensorsOk?'':'bad');$('sensorAlarm').className='alarm '+(sensorsOk?'hidden':'');$('hopAlarm').className='alarm '+(d.hopAlarm.active?'':'hidden');$('hopAlarmName').textContent=d.hopAlarm.name||'';$('pot').textContent=temp(d.sensors.pot.value);$('valve').textContent=temp(d.sensors.valve.value);$('potMeta').textContent=age(d.sensors.pot.ageMs)+(d.sensors.pot.failures?' · '+d.sensors.pot.failures+' fejl':'');$('valveMeta').textContent=age(d.sensors.valve.ageMs)+(d.sensors.valve.failures?' · '+d.sensors.valve.failures+' fejl':'');$('potCard').className='metric '+(d.sensors.pot.valid?'':'fault');$('valveCard').className='metric '+(d.sensors.valve.valid?'':'fault');const sec=Number(d.timeRemaining),m=Math.floor(sec/60),s=sec%60;$('remaining').textContent=String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');$('progress').style.width=(d.stepDuration?Math.max(0,Math.min(100,100-sec*100/d.stepDuration)):0)+'%';$('window').textContent='Start '+(d.startTime||'--')+' · Slut '+(d.endTime||'--');$('outputs').textContent=(d.pumpOn?'ON':'OFF')+' / '+(d.gasOn?(d.gasManual?'ÅBEN · MANUEL':'ÅBEN'):'LUKKET');$('activeRecipe').textContent=d.recipe.name;$('version').textContent=d.version;$('build').textContent='#'+d.firmware.build+' · '+d.firmware.git+(d.firmware.dirty?' · ændret':'');$('sensorStatus').textContent=sensorsOk?'Begge målinger brugbare':'Automatisk gas spærret';$('otaStatus').textContent=d.ota.authConfigured?(d.ota.state==='idle'?'Sikker OTA klar':d.ota.state+' · '+d.ota.progress+'%'):'OTA-login mangler';setInput('mashTime',d.mashTime/60);setInput('mashoutTime',d.mashoutTime/60);setInput('boilTime',d.boilTime/60);setInput('mashSetpoint',d.mashSetpoint);setInput('mashoutSetpoint',d.mashoutSetpoint);setInput('hysteresis',d.hysteresis);setInput('offset',d.valveOffset)}
+function render(d){const recovery=d.recovery;$('storageWarning').className='alarm '+(recovery.storageError?'':'hidden');$('blackoutPanel').className='alarm '+(recovery.pending?'':'hidden');$('blackoutMessage').textContent=recovery.message;$('blackoutDetails').textContent=recovery.step+' - resttid '+Math.floor(recovery.remaining/60)+' min '+(recovery.remaining%60)+' sek';$('continueBlackout').disabled=!recovery.ready;$('potOnlyNotice').className='alarm '+(d.potOnlyControl?'':'hidden');const sensorsOk=d.sensors.pot.valid&&(d.potOnlyControl||d.sensors.valve.valid),healthy=d.sensors.pot.healthy&&(d.potOnlyControl||d.sensors.valve.healthy);$('step').textContent=d.processStep;$('process').textContent=d.processStatus;$('clock').textContent=d.currentTime;$('health').textContent=sensorsOk?(healthy?(d.potOnlyControl?'Grydesensor OK':'Sensorer OK'):'Sensor retry'):'Sensorfejl';$('health').className='badge '+(healthy?'ok':sensorsOk?'':'bad');$('sensorAlarm').className='alarm '+(sensorsOk?'hidden':'');$('hopAlarm').className='alarm '+(d.hopAlarm.active?'':'hidden');$('hopAlarmName').textContent=d.hopAlarm.name||'';$('pot').textContent=temp(d.sensors.pot.value);$('valve').textContent=temp(d.sensors.valve.value);$('potMeta').textContent=age(d.sensors.pot.ageMs)+(d.sensors.pot.failures?' · '+d.sensors.pot.failures+' fejl':'');$('valveMeta').textContent=age(d.sensors.valve.ageMs)+(d.sensors.valve.failures?' · '+d.sensors.valve.failures+' fejl':'');$('potCard').className='metric '+(d.sensors.pot.valid?'':'fault');$('valveCard').className='metric '+(d.sensors.valve.valid?'':'fault');const sec=Number(d.timeRemaining),m=Math.floor(sec/60),s=sec%60;$('remaining').textContent=String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');$('progress').style.width=(d.stepDuration?Math.max(0,Math.min(100,100-sec*100/d.stepDuration)):0)+'%';$('window').textContent='Start '+(d.startTime||'--')+' · Slut '+(d.endTime||'--');$('outputs').textContent=(d.pumpOn?'ON':'OFF')+' / '+(d.gasOn?(d.gasManual?'ÅBEN · MANUEL':'ÅBEN'):'LUKKET');$('activeRecipe').textContent=d.recipe.name;$('version').textContent=d.version;$('build').textContent='#'+d.firmware.build+' · '+d.firmware.git+(d.firmware.dirty?' · ændret':'');$('sensorStatus').textContent=d.potOnlyControl?(sensorsOk?'Kun grydesensor anvendes':'Grydefejl: automatisk gas blokeret'):sensorsOk?'Begge målinger brugbare':'Automatisk gas spærret';$('otaStatus').textContent=d.ota.authConfigured?(d.ota.state==='idle'?'Sikker OTA klar':d.ota.state+' · '+d.ota.progress+'%'):'OTA-login mangler';setInput('mashTime',d.mashTime/60);setInput('mashoutTime',d.mashoutTime/60);setInput('boilTime',d.boilTime/60);setInput('mashSetpoint',d.mashSetpoint);setInput('mashoutSetpoint',d.mashoutSetpoint);setInput('hysteresis',d.hysteresis);setInput('offset',d.valveOffset)}
 async function refresh(){try{const r=await fetch('/status',{cache:'no-store'});if(!r.ok)throw Error(r.status);render(await r.json())}catch(e){$('health').textContent='Forbindelse tabt';$('health').className='badge bad'}finally{setTimeout(refresh,1000)}}
 async function action(name){if((name==='stopProcess'||name==='toggleGasValve')&&!confirm(name==='stopProcess'?'Stop den aktuelle proces?':'Skift gasventilens manuelle tilstand?'))return;actions.forEach(b=>b.disabled=true);try{const r=await fetch('/'+name,{method:'POST'}),text=await r.text();if(!r.ok)throw Error(text||r.status);toast(text);refresh()}catch(e){toast(e.message,true)}finally{actions.forEach(b=>b.disabled=false)}}actions.forEach(b=>b.onclick=()=>action(b.dataset.action));
 $('brewForm').onsubmit=async e=>{e.preventDefault();try{const r=await fetch('/saveSettings',{method:'POST',body:new URLSearchParams(new FormData(e.target))}),text=await r.text();if(!r.ok)throw Error(text);toast('Brygprofil gemt');$('saveState').textContent='Gemt'}catch(err){toast(err.message,true)}};refresh();
@@ -165,6 +167,14 @@ void WebServerHandler::handleStatus() {
   json += F(",\"pumpOn\":"); json += ProcessHandler::isPumpOn() ? F("true") : F("false");
   json += F(",\"gasOn\":"); json += ProcessHandler::isGasValveOn() ? F("true") : F("false");
   json += F(",\"gasManual\":"); json += ProcessHandler::isGasManual() ? F("true") : F("false");
+  json += F(",\"potOnlyControl\":"); json += !ProcessHandler::usesValveTemperature() ? F("true") : F("false");
+  json += F(",\"recovery\":{\"pending\":"); json += ProcessHandler::recoveryPending() ? F("true") : F("false");
+  json += F(",\"ready\":"); json += ProcessHandler::recoveryReady() ? F("true") : F("false");
+  json += F(",\"message\":"); json += jsonString(ProcessHandler::recoveryMessage());
+  json += F(",\"step\":"); json += jsonString(ProcessHandler::recoveryPending() ? ProcessHandler::recoveryStep() : "");
+  json += F(",\"remaining\":"); json += ProcessHandler::recoveryPending() ? ProcessHandler::recoveryRemaining() : 0;
+  json += F(",\"storagePending\":"); json += ProcessStorage::pending() ? F("true") : F("false");
+  json += F(",\"storageError\":"); json += ProcessStorage::failed() ? F("true") : F("false"); json += '}';
   const auto timing = ControlRuntime::metrics();
   json += F(",\"control\":{\"cycles\":"); json += timing.cycles;
   json += F(",\"maxGapMs\":"); json += timing.maxGapMs;
@@ -213,12 +223,24 @@ bool WebServerHandler::rejectDuringOTA() {
   return true;
 }
 
+void WebServerHandler::handleUseValveTemperature() {
+  if (rejectDuringOTA()) return;
+  const String enabled = server.arg("enabled");
+  if (!server.hasArg("enabled") || (enabled != "0" && enabled != "1")) {
+    server.send(400, "text/plain; charset=utf-8", "enabled skal vaere 0 eller 1"); return;
+  }
+  if (ControlRuntime::maintenance()) { server.send(409, "text/plain", "Vedligeholdelse er i gang"); return; }
+  const bool applied = ProcessHandler::setUseValveTemperature(enabled == "1");
+  server.send(applied ? 200 : 500, "text/plain; charset=utf-8",
+              applied ? "Sensorvalg gemt" : "Sensorvalg kunne ikke gemmes; tidligere valg er bevaret");
+}
+
 void WebServerHandler::handleTogglePump() {
   if (rejectDuringOTA()) return;
   bool allowed, on;
   { ControlRuntime::Guard guard;
     const auto state = ProcessHandler::getCurrentState();
-    allowed = !ControlRuntime::maintenance() && (state == ProcessHandler::BrewState::IDLE || state == ProcessHandler::BrewState::PAUSED);
+    allowed = !ProcessHandler::recoveryPending() && !ControlRuntime::maintenance() && (state == ProcessHandler::BrewState::IDLE || state == ProcessHandler::BrewState::PAUSED);
     on = allowed && ProcessHandler::togglePump();
   }
   server.send(allowed ? 200 : 409, "text/plain; charset=utf-8", allowed ? (on ? "Pumpe tændt" : "Pumpe slukket") : "Pause eller stop processen før manuel betjening");
@@ -228,7 +250,7 @@ void WebServerHandler::handleToggleGasValve() {
   bool allowed, on;
   { ControlRuntime::Guard guard;
     const auto state = ProcessHandler::getCurrentState();
-    allowed = !ControlRuntime::maintenance() && (state == ProcessHandler::BrewState::IDLE || state == ProcessHandler::BrewState::PAUSED);
+    allowed = !ProcessHandler::recoveryPending() && !ControlRuntime::maintenance() && (state == ProcessHandler::BrewState::IDLE || state == ProcessHandler::BrewState::PAUSED);
     on = allowed && ProcessHandler::toggleGasValve();
   }
   server.send(allowed ? 200 : 409, "text/plain; charset=utf-8", allowed ? (on ? "Gas åben (manuel)" : "Gas lukket") : "Pause eller stop processen før manuel betjening");
@@ -237,7 +259,7 @@ void WebServerHandler::handleStartMashing() {
   if (rejectDuringOTA()) return;
   bool started;
   { ControlRuntime::Guard guard;
-    started = !ControlRuntime::maintenance() && TemperatureHandler::isGrydeValid() && TemperatureHandler::isVentilValid();
+    started = !ProcessHandler::recoveryPending() && !ControlRuntime::maintenance() && TemperatureHandler::isGrydeValid() && (!ProcessHandler::usesValveTemperature() || TemperatureHandler::isVentilValid());
     if (started) ProcessHandler::startMashing();
   }
   server.send(started ? 200 : 409, "text/plain; charset=utf-8", started ? "Mæskning startet" : "Kan ikke starte: temperaturdata mangler eller vedligeholdelse er i gang");
@@ -246,7 +268,7 @@ void WebServerHandler::handleStartMashout() {
   if (rejectDuringOTA()) return;
   bool started;
   { ControlRuntime::Guard guard;
-    started = !ControlRuntime::maintenance() && TemperatureHandler::isGrydeValid() && TemperatureHandler::isVentilValid();
+    started = !ProcessHandler::recoveryPending() && !ControlRuntime::maintenance() && TemperatureHandler::isGrydeValid() && (!ProcessHandler::usesValveTemperature() || TemperatureHandler::isVentilValid());
     if (started) ProcessHandler::startMashout();
   }
   server.send(started ? 200 : 409, "text/plain; charset=utf-8", started ? "Udmæskning startet" : "Kan ikke starte: temperaturdata mangler eller vedligeholdelse er i gang");
@@ -255,13 +277,18 @@ void WebServerHandler::handleStartBoiling() {
   if (rejectDuringOTA()) return;
   bool started;
   { ControlRuntime::Guard guard;
-    started = !ControlRuntime::maintenance() && TemperatureHandler::isGrydeValid() && TemperatureHandler::isVentilValid();
+    started = !ProcessHandler::recoveryPending() && !ControlRuntime::maintenance() && TemperatureHandler::isGrydeValid() && (!ProcessHandler::usesValveTemperature() || TemperatureHandler::isVentilValid());
     if (started) ProcessHandler::startBoiling();
   }
   server.send(started ? 200 : 409, "text/plain; charset=utf-8", started ? "Kogning startet" : "Kan ikke starte: temperaturdata mangler eller vedligeholdelse er i gang");
 }
 void WebServerHandler::handleStopProcess() { if (rejectDuringOTA()) return; ProcessHandler::stopProcess(); server.send(200, "text/plain; charset=utf-8", "Proces stoppet"); }
 void WebServerHandler::handlePauseProcess() { if (rejectDuringOTA()) return; ProcessHandler::pauseProcess(); server.send(200, "text/plain; charset=utf-8", "Proces pauset"); }
+void WebServerHandler::handleContinueBlackout() {
+  if (rejectDuringOTA()) return;
+  const bool resumed = ProcessHandler::continueRecovery();
+  server.send(resumed ? 200 : 409, "text/plain; charset=utf-8", resumed ? "Proces gendannet" : "Kan ikke fortsaette: kontroller internettid, sensorer og afbrydelsens varighed");
+}
 void WebServerHandler::handleResumeProcess() {
   if (rejectDuringOTA()) return;
   bool resumed;
@@ -270,7 +297,7 @@ void WebServerHandler::handleResumeProcess() {
     if (paused) ProcessHandler::resumeProcess();
     resumed = paused && ProcessHandler::getCurrentState() != ProcessHandler::BrewState::PAUSED;
   }
-  server.send(resumed ? 200 : 409, "text/plain; charset=utf-8", resumed ? "Proces genoptaget" : "Kan ikke genoptage: processen skal være pauset og begge temperaturer gyldige");
+  server.send(resumed ? 200 : 409, "text/plain; charset=utf-8", resumed ? "Proces genoptaget" : "Kan ikke genoptage: processen skal være pauset og de valgte temperaturer gyldige");
 }
 void WebServerHandler::handleResetProcessState() { if (rejectDuringOTA()) return; ProcessHandler::resetProcessState(); server.send(200, "text/plain; charset=utf-8", "Procesdata nulstillet"); }
 void WebServerHandler::handleAcknowledgeHop() {
@@ -460,6 +487,15 @@ void WebServerHandler::handleSettings() {
   const Config cfg = EEPROMHandler::getConfig();
   String html = FPSTR(SETTINGS_HEADER);
   html.reserve(3500);
+  html += F(R"HTML(<div><h2>Ventilsensor</h2><label><input style="width:auto" id="useValveTemperature" type="checkbox"> Anvend ventiltemperatur i automatisk styring</label><p>Kan skiftes under drift. Valget gemmes og bevares efter genstart. Grydesensoren anvendes altid.</p><p id="sensorSaveState" role="status"></p></div>
+<script>
+const sensorInput=document.getElementById('useValveTemperature');
+const sensorState=document.getElementById('sensorSaveState');
+let sensorBusy=false;
+async function readSensorChoice(){if(sensorBusy)return;try{const r=await fetch('/status',{cache:'no-store'});if(!r.ok)throw Error('Status kunne ikke hentes');const d=await r.json();if(!sensorBusy)sensorInput.checked=!d.potOnlyControl}catch(e){sensorState.textContent=e.message}}
+sensorInput.onchange=async()=>{const previous=!sensorInput.checked;sensorBusy=true;sensorInput.disabled=true;sensorState.textContent='Gemmer...';try{const r=await fetch('/useValveTemperature',{method:'POST',body:new URLSearchParams({enabled:sensorInput.checked?'1':'0'})});const text=await r.text();if(!r.ok)throw Error(text);sensorState.textContent=text}catch(e){sensorInput.checked=previous;sensorState.textContent=e.message}finally{sensorBusy=false;sensorInput.disabled=false;readSensorChoice()}};
+readSensorChoice();setInterval(readSensorChoice,3000);
+</script>)HTML");
   html += F("<form method='post' action='/saveSettings'><label>WiFi-navn (SSID)</label><input name='ssid' maxlength='31' value='"); html += htmlEscape(cfg.ssid);
   html += F("'><label>Ny adgangskode (tom = behold nuværende)</label><input name='password' type='password' maxlength='31' autocomplete='new-password'><label>Fast IP (tom = DHCP)</label><input name='ip' maxlength='15' value='"); html += htmlEscape(cfg.ip);
   html += F("'><label>Gateway</label><input name='gw' maxlength='15' value='"); html += htmlEscape(cfg.gw);
@@ -487,6 +523,7 @@ void WebServerHandler::begin() {
   server.on("/saveSettings", HTTP_POST, handleSaveSettings);
   server.on("/resetSettings", HTTP_POST, handleResetSettings);
   server.on("/status", HTTP_GET, handleStatus);
+  server.on("/useValveTemperature", HTTP_POST, handleUseValveTemperature);
   server.on("/togglePump", HTTP_POST, handleTogglePump);
   server.on("/toggleGasValve", HTTP_POST, handleToggleGasValve);
   server.on("/startMashing", HTTP_POST, handleStartMashing);
@@ -494,6 +531,7 @@ void WebServerHandler::begin() {
   server.on("/startBoiling", HTTP_POST, handleStartBoiling);
   server.on("/stopProcess", HTTP_POST, handleStopProcess);
   server.on("/pauseProcess", HTTP_POST, handlePauseProcess);
+  server.on("/continueBlackout", HTTP_POST, handleContinueBlackout);
   server.on("/resumeProcess", HTTP_POST, handleResumeProcess);
   server.on("/resetProcessState", HTTP_POST, handleResetProcessState);
   server.on("/ackHop", HTTP_POST, handleAcknowledgeHop);

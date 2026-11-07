@@ -9,16 +9,34 @@
 #include "ClockService.h"
 #include "ProcessStorage.h"
 #include "PinConfig.h"
+#include "TemperatureControlPolicy.h"
+#include <Preferences.h>
 
 // Definer BOILHEATUP-tiden (i sekunder). Her er den sat til 10 minutter.
 static unsigned long boilHeatupTime = 10 * 60;
 
 namespace {
+  bool blackout = false, recoveryTimed = false, recoveryInvalid = false, expiredStep = false;
+  ProcessStorage::Record interrupted;
+  uint32_t recoveryAt = 0, recoveryElapsed = 0, checkpointAt = 0;
+  bool buttonArmed = false, longHandled = false, shortPress = false;
+  uint32_t pressedAt = 0;
   bool manualGas = false;
+  bool useValveTemperature = !POT_ONLY_CONTROL;
+  struct SensorPolicyRecord { uint8_t version = 1; uint8_t enabled = 0; };
+  bool loadValvePolicy() {
+    Preferences p; SensorPolicyRecord record;
+    if (!p.begin("sensor-policy", true)) return !POT_ONLY_CONTROL;
+    const bool valid = p.getBytesLength("selection") == sizeof(record) &&
+      p.getBytes("selection", &record, sizeof(record)) == sizeof(record) &&
+      record.version == 1 && record.enabled <= 1;
+    p.end();
+    return valid ? record.enabled != 0 : !POT_ONLY_CONTROL;
+  }
   bool rawButton = false, stableButton = false;
   unsigned long buttonChangedAt = 0, pulseUntil = 0;
   bool pulseActive = false;
-  bool buttonPressed() { return stableButton; }
+  bool buttonPressed() { return shortPress; }
   constexpr uint8_t BUZZER_CHANNEL = 7;
 constexpr uint32_t BUZZER_FREQUENCY_HZ = 750;
 constexpr uint8_t BUZZER_RESOLUTION_BITS = 10;
@@ -131,7 +149,9 @@ String ProcessHandler::getProcessStep() {
 // PUBLIC METODER
 // ============================
 void ProcessHandler::begin(uint8_t gasP, uint8_t pumpP, uint8_t buzzerP, uint8_t buttonP) {
+  const bool savedValvePolicy = loadValvePolicy(); // Before control task starts.
   ControlRuntime::Guard guard;
+  useValveTemperature = savedValvePolicy;
   pinGas    = gasP;
   pinPump   = pumpP;
   pinBuzzer = buzzerP;
@@ -152,6 +172,12 @@ void ProcessHandler::begin(uint8_t gasP, uint8_t pumpP, uint8_t buzzerP, uint8_t
   }
   buzzerOff();
 
+  blackout = recoveryTimed = recoveryInvalid = expiredStep = false;
+  checkpointAt = millis();
+  buttonArmed = longHandled = shortPress = false;
+  buzzerActive = userConfirmed = boilingComplete = false;
+  previousState = BrewState::IDLE;
+  resetHopAlarms();
   manualGas = false;
   rawButton = stableButton = false;
   gasValveOn = pumpOn = false;
@@ -180,9 +206,27 @@ void ProcessHandler::begin(uint8_t gasP, uint8_t pumpP, uint8_t buzzerP, uint8_t
 void ProcessHandler::update(float tGryde, float tVentil) {
   ControlRuntime::Guard guard;
   enforceTemperatureSafety();
+  shortPress = false;
   const bool pressed = digitalRead(pinButton) == LOW;
   if (pressed != rawButton) { rawButton = pressed; buttonChangedAt = millis(); }
-  if (millis() - buttonChangedAt >= 50) stableButton = rawButton;
+  if (millis() - buttonChangedAt >= 50 && stableButton != rawButton) {
+    stableButton = rawButton;
+    if (stableButton) { pressedAt = millis(); longHandled = false; }
+    else { shortPress = buttonArmed && !longHandled; buttonArmed = true; }
+  }
+  if (!pressed && !stableButton) buttonArmed = true;
+  if (stableButton && buttonArmed && !longHandled && millis()-pressedAt >= 3000) {
+    longHandled = true;
+    restartProcess();
+    return;
+  }
+  if (blackout) { gasControl(false); pumpControl(false); recoveryReady(); return; }
+  if (currentState != BrewState::IDLE && millis()-checkpointAt >= 30000) saveProcessState();
+  if (expiredStep && currentState != BrewState::PAUSED) {
+    gasControl(false); pumpControl(false); StatusLED::setAwaitingConfirmation(true);
+    if (shortPress) { expiredStep = false; nextStep(); }
+    return;
+  }
   handleBuzzer();
 
   switch (currentState) {
@@ -247,7 +291,7 @@ void ProcessHandler::update(float tGryde, float tVentil) {
 
     case BrewState::BOILHEATUP:
       // Under BOILHEATUP skal gasventilen være tændt og pumpen slukket.
-      if (!isfinite(tGryde) || !isfinite(tVentil)) {
+      if (!isfinite(tGryde) || (useValveTemperature && !isfinite(tVentil))) {
           gasControl(false);
           pumpControl(false);
           return;
@@ -292,7 +336,7 @@ void ProcessHandler::update(float tGryde, float tVentil) {
       break;
 
       case BrewState::BOILING:
-      if (!isfinite(tGryde) || !isfinite(tVentil)) {
+      if (!isfinite(tGryde) || (useValveTemperature && !isfinite(tVentil))) {
           gasControl(false);
           pumpControl(false);
           return;
@@ -384,13 +428,15 @@ void ProcessHandler::checkTimeAndNextStep(unsigned long stepTimeSec) {
 
 void ProcessHandler::startMashing() {
   ControlRuntime::Guard guard;
+  if (blackout) return;
   if (ControlRuntime::maintenance()) return;
   gasControl(false);
-  if (!TemperatureHandler::isGrydeValid() || !TemperatureHandler::isVentilValid()) {
+  if (!TemperatureHandler::isGrydeValid() || (useValveTemperature && !TemperatureHandler::isVentilValid())) {
     gasControl(false);
     RuntimeLog.println("[Safety] Mashing rejected: temperature data unavailable");
     return;
   }
+  expiredStep = false;
   currentState = BrewState::MASHING;
   timerStarted = false;
   saveProcessState();
@@ -399,13 +445,15 @@ void ProcessHandler::startMashing() {
 
 void ProcessHandler::startMashout() {
   ControlRuntime::Guard guard;
+  if (blackout) return;
   if (ControlRuntime::maintenance()) return;
   gasControl(false);
-  if (!TemperatureHandler::isGrydeValid() || !TemperatureHandler::isVentilValid()) {
+  if (!TemperatureHandler::isGrydeValid() || (useValveTemperature && !TemperatureHandler::isVentilValid())) {
     gasControl(false);
     RuntimeLog.println("[Safety] Mashout rejected: temperature data unavailable");
     return;
   }
+  expiredStep = false;
   currentState = BrewState::MASHOUT;
   timerStarted = false;
   saveProcessState();
@@ -414,13 +462,15 @@ void ProcessHandler::startMashout() {
 
 void ProcessHandler::startBoiling() {
   ControlRuntime::Guard guard;
+  if (blackout) return;
   if (ControlRuntime::maintenance()) return;
   gasControl(false);
-  if (!TemperatureHandler::isGrydeValid() || !TemperatureHandler::isVentilValid()) {
+  if (!TemperatureHandler::isGrydeValid() || (useValveTemperature && !TemperatureHandler::isVentilValid())) {
     gasControl(false);
     RuntimeLog.println("[Safety] Boiling rejected: temperature data unavailable");
     return;
   }
+  expiredStep = false;
   boilingComplete = false;
   currentState = BrewState::BOILING;
   timerStarted = true;
@@ -439,6 +489,7 @@ void ProcessHandler::startBoiling() {
 
 void ProcessHandler::stopProcess() {
   ControlRuntime::Guard guard;
+  blackout = expiredStep = false;
   currentState = BrewState::IDLE;
   pulseActive = false;
   timerStarted = false;
@@ -456,6 +507,7 @@ void ProcessHandler::stopProcess() {
 
 void ProcessHandler::pauseProcess() {
   ControlRuntime::Guard guard;
+  if (blackout) return;
   if (currentState != BrewState::IDLE && currentState != BrewState::PAUSED) {
     pauseOffset = millis() - processStartMillis;
     previousState = currentState;
@@ -473,10 +525,11 @@ void ProcessHandler::pauseProcess() {
 
 void ProcessHandler::resumeProcess() {
   ControlRuntime::Guard guard;
+  if (blackout) return;
   if (ControlRuntime::maintenance()) return;
   gasControl(false);
   if (currentState == BrewState::PAUSED) {
-    if (!TemperatureHandler::isGrydeHealthy() || !TemperatureHandler::isVentilHealthy()) return;
+    if (!TemperatureHandler::isGrydeHealthy() || (useValveTemperature && !TemperatureHandler::isVentilHealthy())) return;
     processStartMillis = millis() - pauseOffset;
     currentState = previousState;
     saveProcessState();
@@ -486,24 +539,117 @@ void ProcessHandler::resumeProcess() {
 
 void ProcessHandler::saveProcessState() {
   ControlRuntime::Guard guard;
-  ProcessStorage::stage(processStartEpoch, static_cast<uint8_t>(currentState), timerStarted);
+  if (blackout) return; // Keep the original checkpoint through repeated restarts.
+  checkpointAt = millis();
+  ProcessStorage::Record r;
+  r.epoch = ClockService::epoch();
+  r.state = static_cast<uint8_t>(currentState); r.previous = static_cast<uint8_t>(previousState);
+  r.timer = timerStarted; r.completed = boilingComplete; r.expired = expiredStep;
+  r.elapsed = timerStarted ? (currentState == BrewState::PAUSED ? pauseOffset : millis()-processStartMillis)/1000 : 0;
+  r.elapsed = min(r.elapsed, uint32_t(86400));
+  r.recipe.mashTime = mashTime; r.recipe.mashoutTime = mashoutTime; r.recipe.boilTime = boilTime;
+  r.recipe.mashSetpoint = mashSetpoint; r.recipe.mashoutSetpoint = mashoutSetpoint;
+  r.recipe.hysteresis = hysteresis; r.recipe.valveOffset = valveOffset;
+  r.recipe.hopCount = hopCount;
+  for (unsigned i=0; i<hopCount; ++i) { r.recipe.hops[i] = hopSchedule[i]; if (hopTriggered[i]) r.hopMask |= 1U<<i; }
+  r.activeHop = hopAlarmActive ? activeHopIndex : -1;
+  ProcessStorage::stage(r);
 }
 
 bool ProcessHandler::restoreProcessState() {
   ControlRuntime::Guard guard;
-  // A power/reset cycle always starts OFF/IDLE. Never restart heating from a
-  // stale wall clock or a legacy record that overlapped the network config.
-  return false;
+  currentState = BrewState::IDLE; timerStarted = false;
+  blackout = ProcessStorage::load(interrupted) && interrupted.state != 0;
+  recoveryTimed = recoveryInvalid = false;
+  return blackout;
+}
+
+bool ProcessHandler::recoveryPending() { ControlRuntime::Guard guard; return blackout; }
+bool ProcessHandler::recoveryReady() {
+  ControlRuntime::Guard guard;
+  if (!blackout) return false;
+  if (!recoveryTimed && ClockService::synchronized()) {
+    const uint32_t now = ClockService::epoch();
+    recoveryAt = millis(); recoveryTimed = true;
+    // Conservative upper bound: checkpoint age, including reboot/NTP wait, must be < 1h.
+    recoveryInvalid = interrupted.epoch < 1609459200UL || now < interrupted.epoch || now-interrupted.epoch >= 3600;
+    recoveryElapsed = interrupted.elapsed;
+    if (!recoveryInvalid && interrupted.timer && interrupted.state != static_cast<uint8_t>(BrewState::PAUSED))
+      recoveryElapsed += now-interrupted.epoch;
+  }
+  return recoveryTimed && !recoveryInvalid && !ControlRuntime::maintenance() &&
+    TemperatureHandler::isGrydeHealthy() && (!useValveTemperature || TemperatureHandler::isVentilHealthy());
+}
+const char* ProcessHandler::recoveryMessage() {
+  ControlRuntime::Guard guard;
+  recoveryReady();
+  if (!blackout) return "";
+  if (!recoveryTimed) return "BLACKOUT - afventer internettid";
+  if (recoveryInvalid) return "BLACKOUT - tidsdata ugyldige eller afbrydelse mindst 1 time. Afslut eller start forfra.";
+  if (!TemperatureHandler::isGrydeHealthy() || (useValveTemperature && !TemperatureHandler::isVentilHealthy()))
+    return "BLACKOUT - afventer gyldige sensorer";
+  return "BLACKOUT - tryk Fortsaet paa webinterface";
+}
+const char* ProcessHandler::recoveryStep() {
+  ControlRuntime::Guard guard;
+  const uint8_t state = interrupted.state == 5 ? interrupted.previous : interrupted.state;
+  switch (state) { case 1: return "Maeskning"; case 2: return "Udmaeskning";
+    case 3: return "Opvarmning"; case 4: return "Kogning"; default: return "Ukendt"; }
+}
+unsigned long ProcessHandler::recoveryRemaining() {
+  ControlRuntime::Guard guard;
+  recoveryReady();
+  const uint8_t state = interrupted.state == 5 ? interrupted.previous : interrupted.state;
+  uint32_t duration = state == 1 ? interrupted.recipe.mashTime : state == 2 ? interrupted.recipe.mashoutTime :
+    state == 3 ? boilHeatupTime : interrupted.recipe.boilTime;
+  uint32_t elapsed = recoveryTimed ? recoveryElapsed : interrupted.elapsed;
+  if (recoveryTimed && interrupted.timer && interrupted.state != 5) elapsed += (millis()-recoveryAt)/1000;
+  return !interrupted.timer ? duration : elapsed >= duration ? 0 : duration-elapsed;
+}
+bool ProcessHandler::continueRecovery() {
+  ControlRuntime::Guard guard;
+  if (!recoveryReady()) return false;
+  const uint32_t remaining = recoveryRemaining();
+  const auto& r = interrupted;
+  mashTime=r.recipe.mashTime; mashoutTime=r.recipe.mashoutTime; boilTime=r.recipe.boilTime;
+  mashSetpoint=r.recipe.mashSetpoint; mashoutSetpoint=r.recipe.mashoutSetpoint;
+  hysteresis=r.recipe.hysteresis; valveOffset=r.recipe.valveOffset;
+  hopCount=r.recipe.hopCount;
+  for (unsigned i=0; i<hopCount; ++i) { hopSchedule[i]=r.recipe.hops[i]; hopTriggered[i]=(r.hopMask & (1U<<i)) != 0; }
+  activeHopIndex=r.activeHop; hopAlarmActive=r.activeHop>=0; hopAlarmAwaitingRelease=false;
+  currentState=static_cast<BrewState>(r.state); previousState=static_cast<BrewState>(r.previous);
+  timerStarted=r.timer; boilingComplete=r.completed;
+  uint32_t elapsed=recoveryElapsed;
+  if (r.timer && r.state != 5) elapsed += (millis()-recoveryAt)/1000;
+  elapsed=min(elapsed,uint32_t(86400));
+  processStartMillis=millis()-elapsed*1000UL; pauseOffset=elapsed*1000UL;
+  processStartEpoch=ClockService::epoch()-elapsed;
+  startTimeStr=formatEpochTime(processStartEpoch); endTimeStr=formatEpochTime(ClockService::epoch()+remaining);
+  userConfirmed=buzzerActive=pulseActive=false;
+  // An elapsed step waits for normal step acknowledgement, without any output pulse.
+  expiredStep=r.expired || (r.timer && remaining == 0);
+  blackout=false;
+  gasControl(false); pumpControl(false);
+  saveProcessState();
+  return true;
+}
+void ProcessHandler::restartProcess() {
+  ControlRuntime::Guard guard;
+  if (ControlRuntime::maintenance()) return;
+  resetProcessState();
+  startMashing();
 }
 
 void ProcessHandler::resetProcessState() {
   ControlRuntime::Guard guard;
+  blackout = expiredStep = false;
   currentState = BrewState::IDLE;
   timerStarted = false;
   processStartEpoch = processStartMillis = 0;
   gasControl(false); pumpControl(false);
   pulseActive = false; buzzerActive = false; buzzerOff();
   resetHopAlarms();
+  boilingComplete = false; previousState = BrewState::IDLE;
   StatusLED::setAwaitingConfirmation(false);
   userConfirmed = false;
   startTimeStr = endTimeStr = "";
@@ -621,6 +767,7 @@ void ProcessHandler::acknowledgeHopAlarm() {
   hopAlarmActive = false;
   hopAlarmAwaitingRelease = false;
   activeHopIndex = -1;
+  saveProcessState();
   if (!buzzerActive) {
     buzzerOff();
     StatusLED::setAwaitingConfirmation(false);
@@ -629,7 +776,7 @@ void ProcessHandler::acknowledgeHopAlarm() {
 
 bool ProcessHandler::togglePump() {
   ControlRuntime::Guard guard;
-  if (!ControlRuntime::maintenance() && (currentState == BrewState::IDLE || currentState == BrewState::PAUSED)) {
+  if (!blackout && !ControlRuntime::maintenance() && (currentState == BrewState::IDLE || currentState == BrewState::PAUSED)) {
     pumpOn = !pumpOn;
     digitalWrite(pinPump, pumpOn ? HIGH : LOW);
   }
@@ -638,7 +785,7 @@ bool ProcessHandler::togglePump() {
 
 bool ProcessHandler::toggleGasValve() {
   ControlRuntime::Guard guard;
-  if (!ControlRuntime::maintenance() && (currentState == BrewState::IDLE || currentState == BrewState::PAUSED)) {
+  if (!blackout && !ControlRuntime::maintenance() && (currentState == BrewState::IDLE || currentState == BrewState::PAUSED)) {
     gasValveOn = !gasValveOn;
     manualGas = gasValveOn;
     digitalWrite(pinGas, gasValveOn ? HIGH : LOW);
@@ -741,14 +888,40 @@ void ProcessHandler::gasControl(bool state) {
   ControlRuntime::Guard guard;
   manualGas = false;
   // Automatic gas only. Manual web operation in IDLE/PAUSED has a separate path.
-  state = state && TemperatureHandler::isGrydeHealthy() && TemperatureHandler::isVentilHealthy();
+  state = state && !blackout && TemperatureHandler::isGrydeHealthy() && (!useValveTemperature || TemperatureHandler::isVentilHealthy());
   gasValveOn = state;
   digitalWrite(pinGas, state ? HIGH : LOW);
 }
 
+bool ProcessHandler::usesValveTemperature() {
+  ControlRuntime::Guard guard;
+  return useValveTemperature;
+}
+
+bool ProcessHandler::setUseValveTemperature(bool enabled) {
+  // Called by the web/main task only. Never hold the control mutex during NVS I/O.
+  if (ControlRuntime::maintenance()) return false;
+  Preferences p;
+  SensorPolicyRecord record; record.enabled = enabled ? 1 : 0;
+  if (!p.begin("sensor-policy", false)) return false;
+  SensorPolicyRecord saved;
+  const bool unchanged = p.getBytesLength("selection") == sizeof(saved) &&
+    p.getBytes("selection", &saved, sizeof(saved)) == sizeof(saved) &&
+    saved.version == record.version && saved.enabled == record.enabled;
+  const bool ok = unchanged || p.putBytes("selection", &record, sizeof(record)) == sizeof(record);
+  p.end();
+  if (!ok) return false; // Keep the active choice if persistence fails.
+  ControlRuntime::Guard guard;
+  if (enabled == useValveTemperature) return true;
+  useValveTemperature = enabled;
+  if (enabled && !manualGas) gasControl(false);
+  enforceTemperatureSafety();
+  return true;
+}
+
 void ProcessHandler::enforceTemperatureSafety() {
   ControlRuntime::Guard guard;
-  if (!manualGas && gasValveOn && (!TemperatureHandler::isGrydeHealthy() || !TemperatureHandler::isVentilHealthy())) {
+  if (!manualGas && gasValveOn && (!TemperatureHandler::isGrydeHealthy() || (useValveTemperature && !TemperatureHandler::isVentilHealthy()))) {
     gasControl(false);
     RuntimeLog.println("[Safety] Gas closed: temperature fault or stale data");
   }
@@ -756,6 +929,7 @@ void ProcessHandler::enforceTemperatureSafety() {
 
 void ProcessHandler::pumpControl(bool state) {
   ControlRuntime::Guard guard;
+  state = state && !blackout;
   pumpOn = state;
   digitalWrite(pinPump, state ? HIGH : LOW);
 }
@@ -813,6 +987,7 @@ void ProcessHandler::checkHopAlarms() {
       hopTriggered[index] = true;
       activeHopIndex = index;
       hopAlarmActive = true;
+      saveProcessState();
       hopAlarmAwaitingRelease = true;
       RuntimeLog.printf("[Hops] Add now: %s (%lu min before boil end)\n", hopSchedule[index].name,
                     hopSchedule[index].secondsBeforeBoilEnd / 60UL);
@@ -828,7 +1003,7 @@ void ProcessHandler::temperatureControl(float currentTemp, float setpoint, float
   unsigned long now = millis();
 
   // Missing or stale sensor data always wins over the minimum switch interval.
-  if (!isfinite(currentTemp) || !isfinite(tVentil)) {
+  if (!isfinite(currentTemp) || (useValveTemperature && !isfinite(tVentil))) {
     if (gasValveOn) {
       gasControl(false);
       lastGasSwitchTime = now;
@@ -843,7 +1018,7 @@ void ProcessHandler::temperatureControl(float currentTemp, float setpoint, float
   }
 
   // Hvis ventiltemperaturen overstiger setpoint + valveOffset, skal gassen være slukket.
-  if (tVentil >= setpoint + valveOffset) {
+  if (useValveTemperature && tVentil >= setpoint + valveOffset) {
     if (gasValveOn) {
       gasControl(false);
       lastGasSwitchTime = now;

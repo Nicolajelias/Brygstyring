@@ -8,6 +8,7 @@
 #include "BeerFrames.h"
 #include "Version.h"
 #include "PinConfig.h"
+#include "ClockService.h"
 #include <math.h>
 
 #ifndef OLED_RESET
@@ -69,6 +70,23 @@ void DisplayHandler::update(float tGryde, float tVentil, bool showVentil, const 
   display.setFont(); // Standardfonten (typisk 5x7)
   display.setTextSize(1);
   
+  if (ProcessHandler::recoveryPending()) {
+    drawText("BLACKOUT", 0, 0);
+    drawText(ProcessHandler::recoveryStep(), 0, 12);
+    if (!ClockService::synchronized()) {
+      drawText("Afventer internettid", 0, 26);
+    } else if (ProcessHandler::recoveryReady()) {
+      drawText("Tryk Fortsaet", 0, 26);
+      drawText("paa webinterface", 0, 38);
+    } else {
+      drawText("Kan ikke fortsaette", 0, 26);
+      drawText("Se webinterface", 0, 38);
+    }
+    drawText("Hold 3s: start forfra", 0, 54);
+    display.display();
+    return;
+  }
+
   // Linje 0: ProcessStep og status-symbol
   drawText(processStep, 0, 0, 1);
   String symbol = ProcessHandler::getProcessSymbol();

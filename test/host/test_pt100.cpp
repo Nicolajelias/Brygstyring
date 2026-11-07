@@ -1,4 +1,5 @@
 #include "Arduino.h"
+#include "TemperatureControlPolicy.h"
 #include "SPI.h"
 #include "Preferences.h"
 #include "TemperatureHandler.h"
@@ -77,8 +78,10 @@ void reset(bool eraseCalibration = true) {
   mockChips = {};
   std::fill(std::begin(mockPins), std::end(mockPins), HIGH);
   Preferences::failWrites = false;
-  if (eraseCalibration) Preferences::blob.clear();
+  if (eraseCalibration) { Preferences::blob.clear(); Preferences::records.erase("sensor-policy"); }
   mockOTA = false;
+  Preferences::records.erase("brew-process");
+  ProcessStorage::begin();
   TemperatureHandler::begin(4, 5);
   ProcessHandler::begin(17, 18, 21, 15);
 }
@@ -155,10 +158,64 @@ int main() {
       assert(!ProcessHandler::toggleGasValve()); expectOff();
       assert(ProcessHandler::togglePump());
       assert(!ProcessHandler::togglePump());
-    } else expectOff();
+    } else if (!POT_ONLY_CONTROL) expectOff();
+    ProcessHandler::gasControl(true);
+    assert(ProcessHandler::isGasValveOn() == POT_ONLY_CONTROL);
+    // Pot failure must still close automatic gas, in every process state.
+    mockChips[4].injectedFault = 0x10;
+    advance(1000);
+    ProcessHandler::enforceTemperatureSafety(); expectOff();
     ProcessHandler::gasControl(true); expectOff();
   }
   std::cout << "PASS automatic gas interlock, manual gas and pump unaffected in IDLE/PAUSED\n";
+
+  if (POT_ONLY_CONTROL) {
+    for (auto start : {&ProcessHandler::startMashing, &ProcessHandler::startMashout, &ProcessHandler::startBoiling}) {
+      reset(); validReadings(); mockChips[5].injectedFault = 0x10; advance(1000);
+      start(); assert(ProcessHandler::getCurrentState() != ProcessHandler::BrewState::IDLE);
+      ProcessHandler::pauseProcess(); ProcessHandler::resumeProcess();
+      assert(ProcessHandler::getCurrentState() != ProcessHandler::BrewState::PAUSED);
+      mockChips[4].injectedFault = 0x10; advance(1000);
+      ProcessHandler::enforceTemperatureSafety(); expectOff();
+    }
+    reset(); validReadings();
+    advance(6000);
+    ProcessHandler::temperatureControl(20, 65, 120);
+    assert(ProcessHandler::isGasValveOn()); // valve offset is ignored
+    advance(6000);
+    ProcessHandler::temperatureControl(70, 65, NAN); expectOff();
+    std::cout << "PASS pot-only start/resume, valve offset bypass and pot setpoint cutoff\n";
+  }
+
+  reset(); validReadings();
+  ProcessHandler::currentState = ProcessHandler::BrewState::MASHING;
+  assert(ProcessHandler::setUseValveTemperature(false));
+  mockChips[5].injectedFault = 0x10; advance(1000);
+  ProcessHandler::gasControl(true); assert(ProcessHandler::isGasValveOn());
+  assert(ProcessHandler::setUseValveTemperature(true)); expectOff();
+  ProcessHandler::gasControl(true); expectOff();
+  assert(ProcessHandler::setUseValveTemperature(false)); expectOff();
+  ProcessHandler::gasControl(true); assert(ProcessHandler::isGasValveOn());
+  mockChips[4].injectedFault = 0x10; advance(1000);
+  ProcessHandler::enforceTemperatureSafety(); expectOff();
+  ProcessHandler::stopProcess();
+  assert(ControlRuntime::enterMaintenance());
+  assert(!ProcessHandler::setUseValveTemperature(true));
+  assert(!ProcessHandler::usesValveTemperature());
+  ControlRuntime::leaveMaintenance();
+  reset(); assert(ProcessHandler::usesValveTemperature() == !POT_ONLY_CONTROL);
+  assert(ProcessHandler::setUseValveTemperature(true));
+  reset(false); assert(ProcessHandler::usesValveTemperature());
+  assert(ProcessHandler::setUseValveTemperature(false));
+  reset(false); assert(!ProcessHandler::usesValveTemperature());
+  Preferences::failWrites = true;
+  assert(!ProcessHandler::setUseValveTemperature(true));
+  assert(!ProcessHandler::usesValveTemperature());
+  reset(false); assert(!ProcessHandler::usesValveTemperature());
+  Preferences::records["sensor-policy"] = {99, 1};
+  reset(false); assert(ProcessHandler::usesValveTemperature() == !POT_ONLY_CONTROL);
+  std::cout << "PASS saved valve choice survives reboot, write failure preserves choice, invalid version uses default\n";
+  std::cout << "PASS runtime sensor selection, immediate gas cutoff, pot protection, maintenance and reboot default\n";
 
   reset(); validReadings(); assert(ProcessHandler::toggleGasValve());
   mockNow += 5001;
@@ -292,13 +349,13 @@ int main() {
   assert(web.response.find("\"canSave\":true") != String::npos);
   std::cout << "PASS real HTTP handlers: validation, process/gas/OTA guards, NVS error, per-channel reset, JSON\n";
   reset();
-  // No flash writes from process state transitions or when an output is ON.
+  // State transitions only stage; the storage worker persists even during operation.
   Preferences::records.clear();
   ProcessHandler::stopProcess();
   assert(Preferences::records.empty());
   mockNow = 2000;
   assert(ProcessHandler::toggleGasValve());
-  ProcessStorage::flush(); assert(Preferences::records.empty());
+  ProcessStorage::flush(); assert(!Preferences::records["brew-process"].empty());
   assert(!TemperatureHandler::saveCalibration(one,two));
   assert(!ControlRuntime::enterMaintenance());
   ProcessHandler::stopProcess();
@@ -321,5 +378,102 @@ int main() {
   assert(ProcessHandler::getRemainingTime() == 3597);
   mockEpoch = 0; ProcessHandler::stopProcess();
   std::cout << "PASS maintenance exclusion, deferred independent storage, monotonic process timers\n";
+
+  auto tick = [](unsigned ms) {
+    for (unsigned i=0; i<ms; i+=5) {
+      advance(5);
+      ProcessHandler::update(TemperatureHandler::getGrydeTemp(), TemperatureHandler::getVentilTemp());
+    }
+  };
+  auto checkpoint = [](uint8_t state, bool timed, uint32_t elapsed) {
+    reset(); validReadings();
+    ProcessStorage::Record r; r.state=state; r.previous=1; r.timer=timed;
+    r.epoch=1800000000; r.elapsed=elapsed;
+    r.recipe.mashTime=3600; r.recipe.mashoutTime=1200; r.recipe.boilTime=3600;
+    ProcessStorage::stage(r); ProcessStorage::flush();
+    ProcessStorage::begin(); ProcessHandler::begin(17,18,21,15);
+    assert(ProcessHandler::recoveryPending()); expectOff(); assert(!ProcessHandler::isPumpOn());
+  };
+  for (uint8_t state : {1,2,3,4,5}) {
+    checkpoint(state,true,100);
+    assert(!ProcessHandler::recoveryReady()); assert(!ProcessHandler::continueRecovery());
+    assert(!ProcessHandler::toggleGasValve()); assert(!ProcessHandler::togglePump());
+    ProcessHandler::startBoiling(); ProcessHandler::startMashing(); ProcessHandler::resumeProcess();
+    tick(100); expectOff(); assert(!ProcessHandler::isPumpOn());
+    mockEpoch=1800000200;
+    assert(ProcessHandler::recoveryReady());
+    unsigned duration = state==1 || state==4 || state==5 ? 3600 : state==2 ? 1200 : 600;
+    assert(ProcessHandler::recoveryRemaining()==duration-(state==5?100:300));
+    // Short press cannot resume blackout.
+    mockPins[15]=LOW; tick(100); mockPins[15]=HIGH; tick(100);
+    assert(ProcessHandler::recoveryPending()); expectOff();
+    assert(ProcessHandler::continueRecovery()); expectOff(); assert(!ProcessHandler::isPumpOn());
+    assert(static_cast<uint8_t>(ProcessHandler::getCurrentState())==state);
+    assert(ProcessHandler::getRemainingTime()==(state==5?0:duration-300));
+    if (state==5) { ProcessHandler::resumeProcess(); assert(ProcessHandler::getRemainingTime()==3500); }
+    // Wall-clock jumps after recovery never change the monotonic countdown.
+    const auto remaining=ProcessHandler::getRemainingTime(); mockEpoch+=50000;
+    assert(ProcessHandler::getRemainingTime()==remaining);
+  }
+  std::cout << "PASS recovery all steps and paused state; outputs blocked, short press ignored, elapsed time and NTP jumps\n";
+  for (unsigned age : {3599,3600,3601}) {
+    checkpoint(1,true,10); mockEpoch=1800000000+age;
+    assert(ProcessHandler::recoveryReady()==(age<3600));
+  }
+  checkpoint(1,true,10); mockEpoch=1799999999;
+  assert(!ProcessHandler::continueRecovery());
+  checkpoint(1,false,0); mockEpoch=1800000100;
+  assert(ProcessHandler::continueRecovery()); assert(!ProcessHandler::isTimerStarted());
+  assert(ProcessHandler::getRemainingTime()==3600);
+  checkpoint(1,true,100); mockEpoch=1800000100;
+  mockChips[4].injectedFault=0x10; advance(1000);
+  assert(!ProcessHandler::continueRecovery()); expectOff();
+  for (uint8_t state : {1,2,3,4}) {
+    checkpoint(state,true,3500); mockEpoch=1800000200;
+    assert(ProcessHandler::continueRecovery()); tick(100);
+    expectOff(); assert(!ProcessHandler::isPumpOn());
+    // Expired recovered steps do not skip ahead or pulse outputs.
+    assert(static_cast<uint8_t>(ProcessHandler::getCurrentState())==state);
+  }
+  std::cout << "PASS recovery time boundary, backwards clock, heat-up, pot failure and expired-step OFF latch\n";
+  checkpoint(1,true,100); mockEpoch=1800000100;
+  const auto savedBefore=Preferences::records["brew-process"];
+  tick(31000); ProcessStorage::flush();
+  assert(Preferences::records["brew-process"]==savedBefore);
+  ProcessStorage::begin(); ProcessHandler::begin(17,18,21,15);
+  assert(ProcessHandler::recoveryPending()); // repeated outage retains original checkpoint
+  mockPins[15]=HIGH; tick(60); mockPins[15]=LOW; tick(3200);
+  assert(!ProcessHandler::recoveryPending());
+  assert(ProcessHandler::getCurrentState()==ProcessHandler::BrewState::MASHING);
+  assert(!ProcessHandler::isTimerStarted());
+  tick(1000); assert(!ProcessHandler::isTimerStarted()); // held button never acts as short confirmation
+  mockPins[15]=HIGH; tick(100);
+  ProcessHandler::startBoiling(); tick(100);
+  mockPins[15]=LOW; tick(3200);
+  assert(ProcessHandler::getCurrentState()==ProcessHandler::BrewState::MASHING);
+  assert(!ProcessHandler::isTimerStarted());
+  mockPins[15]=HIGH; tick(100);
+  ProcessHandler::stopProcess(); ProcessStorage::flush();
+  ProcessStorage::begin(); ProcessHandler::begin(17,18,21,15);
+  assert(!ProcessHandler::recoveryPending()); expectOff();
+  std::cout << "PASS repeated blackout, long press resets/restarts once, stop persists\n";
+  checkpoint(4,true,100);
+  ProcessStorage::Record hopRecord; assert(ProcessStorage::load(hopRecord));
+  hopRecord.recipe.hopCount=2;
+  hopRecord.recipe.hops[0].secondsBeforeBoilEnd=3600;
+  hopRecord.recipe.hops[1].secondsBeforeBoilEnd=3300;
+  hopRecord.hopMask=1; hopRecord.activeHop=0;
+  ProcessStorage::stage(hopRecord); ProcessStorage::flush();
+  ProcessStorage::begin(); ProcessHandler::begin(17,18,21,15); mockEpoch=1800000200;
+  assert(ProcessHandler::continueRecovery());
+  assert(ProcessHandler::isHopAlarmActive() && ProcessHandler::isHopTriggered(0));
+  ProcessHandler::acknowledgeHopAlarm(); tick(100);
+  assert(ProcessHandler::isHopAlarmActive() && ProcessHandler::isHopTriggered(1));
+  Preferences::failWrites=true; ProcessStorage::flush(); assert(ProcessStorage::failed());
+  Preferences::failWrites=false; advance(1000); ProcessStorage::flush(); assert(!ProcessStorage::failed());
+  Preferences::records["brew-process"][0]^=1;
+  ProcessStorage::begin(); ProcessHandler::begin(17,18,21,15);
+  assert(!ProcessHandler::recoveryPending()); expectOff();
+  std::cout << "PASS hop recovery, write retry and corrupt checkpoint rejection\n";
 
 }

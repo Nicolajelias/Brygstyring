@@ -12,6 +12,8 @@ public:
   static void begin(uint8_t gasP, uint8_t pumpP, uint8_t buzzerP, uint8_t buttonP);
   static void update(float tGryde, float tVentil);
   static void enforceTemperatureSafety();
+  static bool usesValveTemperature();
+  static bool setUseValveTemperature(bool enabled);
   static String getProcessStep();
 
   // Start/stop for de enkelte trin
@@ -21,6 +23,13 @@ public:
   static void stopProcess();
   static void pauseProcess();
   static void resumeProcess();
+  static bool recoveryPending();
+  static bool recoveryReady();
+  static const char* recoveryMessage();
+  static const char* recoveryStep();
+  static unsigned long recoveryRemaining();
+  static bool continueRecovery();
+  static void restartProcess(); // Long button press: discard blackout/pause and start mashing anew.
   
   // Funktioner til at gemme og gendanne proces state
   static void saveProcessState();

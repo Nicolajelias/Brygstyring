@@ -1,3 +1,98 @@
+## Blackout og genstart (2026-11-07)
+
+Valideringsstatus: Firmware kompileret. Den udvidede hosttestpakke er nu
+afviklet og bestaaet baade med og uden pot-only opstartsstandard. Testene
+daekker alle procestrin/pause, manglende og baglaens internettid, 3599/3600/
+3601-sekunders graensen, grydefejl, udloebne trin uden outputpuls, gentagne
+blackouts, langt tryk, stop, humlealarmer, skrivefejl og korrupte kontrolpunkter.
+Den tidligere Windows-programkontrolblokering er ikke laengere til stede.
+Fysiske gas/pumpe-udgange er ikke aktiveret som test.
+Firmware er uploadet og hashverificeret paa COM10. Efter boot viste /status
+Idle, gas/pumpe OFF, recovery.pending=false og storageError=false.
+Begge sensorer havde gyldige maalinger uden fejl, kontrolgap maks. 5 ms.
+Websidens blackout-panel og Fortsaet-handling er verificeret i leveret HTML.
+Et fysisk blackout under aktiv brygning og OLED-visningen er ikke afproevet;
+disse forloeb er testet i simulation, ikke med de virkelige udgange aktiveret.
+
+Ny firmware gemmer et versioneret kontrolpunkt med checksum ved trinskift,
+alarmkvittering og hvert 30. sekund under drift. En separat storage-task
+skriver i NVS uden at holde kontrolmutex. Flashoperationer kan stadig give
+korte cachepauser; ingen netvaerks- eller NTP-ventetid indgaar i kontroltasken.
+UI viser skrivefejl; manglende kontrolpunkter kan forhindre genoptagelse.
+
+Efter genstart er gas og pumpe OFF. Et gyldigt kontrolpunkt for en aktiv
+proces giver BLACKOUT paa OLED og web. Kun webknappen Fortsaet genoptager.
+Kort fysisk tryk ignoreres her. Langt tryk paa 3 sekunder nulstiller den
+afbrudte proces og starter maeskning forfra, og virker ogsaa under normal
+aktiv/pauset drift. Start forfra kraever gyldige tilvalgte sensorer; ellers
+forbliver processen Idle med gas/pumpe OFF. En knap holdt under opstart
+skal foerst slippes. Korte tryk behandles ved slip for at undgaa dobbelthandling.
+
+Genoptagelse kraever synkroniseret internettid og gyldige tilvalgte sensorer.
+Ved foerste tidssynkronisering efter boot skal kontrolpunktets alder vaere
+under 3600 sekunder. Dette er en konservativ graense: op til 30 sekunders
+kontrolpunktinterval samt boot/NTP-ventetid indgaar. Baglaens tid eller et
+kontrolpunkt uden gyldig tid afvises. Uden internettid kan brugeren stadig
+vaelge Afslut proces eller holde knappen for at starte forfra.
+
+Loebende timere korrigeres for tiden siden kontrolpunktet, inklusive ventetid
+paa brugerens Fortsaet. En manuelt pauset timer forbliver pauset. Opvarmning,
+hvor timer endnu ikke er startet, faerdiggoeres efter normal temperaturkontrol.
+Udlobne gendannede trin holder begge udgange OFF og afventer normal kort
+trinbekraeftelse; de springer ikke flere trin over eller aabner gas kortvarigt.
+Opskriftens tal, humleskema og allerede udloeste/afventende humlealarmer
+foelger kontrolpunktet. Efter genoptagelse bruges monotontid igen.
+
+Gentagne genstarter mens BLACKOUT afventer overskriver ikke det oprindelige
+kontrolpunkt. Stop og nulstilling gemmes som Idle. Skrivefejl proeves igen;
+str?msvigt inden en skrivning er faerdig kan efterlade forrige kontrolpunkt.
+Den gamle state-v1-post anvendes ikke, da den mangler noedvendige data.
+Ingen proces fra foer denne firmware kan derfor genoptages med den nye funktion.
+
+Dette afsnit erstatter tidligere beskrivelser af altid Idle efter genstart
+og proceslagring udelukkende med slukkede udgange.
+
+## Gemt sensorvalg paa systemsiden (2026-11-07)
+
+Sensorvalget findes nu kun paa `/settings` (System). Forsiden viser fortsat
+status, men har ingen kontakt til at aendre valget. Valget gemmes i separat
+NVS-namespace `sensor-policy`, versioneret record `selection`, og indlaeses
+foer kontroltasken starter. Kun foerste opstart eller ugyldige lagrede data
+bruger `BRYG_POT_ONLY` som standard. Begge valg bevares efter genstart.
+HTTP-svar bekraefter foerst "gemt", naar NVS-skrivningen er lykkedes.
+Ved skrivefejl bevares det aktive valg og klienten faar en fejl.
+Skrivning foregaar i webtasken uden kontrolmutex; selve flashoperationen kan
+kortvarigt standse flash/cache-adgang paa ESP32. Der er derfor ikke garanti
+for nul paavirkning af sampling netop under lagring. Uforandrede gemte valg
+skrives ikke igen. Sensorfejlbeskyttelse er uaendret.
+Dette erstatter nedenstaaende historiske beskrivelse af RAM-only sensorvalg.
+
+## Sensorvalg under drift (2026-11-07)
+
+Websidens afkrydsningsfelt "Anvend ventiltemperatur i automatisk styring"
+kan nu skiftes under drift uden genstart. Valget omfatter start, genoptagelse,
+regulering og ventil-offset. Ventilens fejl vises fortsat, selv naar den er fravalgt.
+Grydesensoren er altid paakraevet. Tilvalg lukker automatisk gas med det samme;
+reguleringen vurderer derefter, om gas maa aabnes igen. Manuel gas er uaendret.
+Valget gemmes kun i RAM for at undgaa flashskrivning under brygning.
+Efter genstart bruges build-standardvaerdien (`BRYG_POT_ONLY=1`: ventil fravalgt).
+Websiden viser baade det aktive valg og genstartsstandarden.
+POST `/useValveTemperature` accepterer kun `enabled=0` eller `enabled=1`;
+vedligeholdelse/OTA afviser aendringer. Intet kald taender gas direkte.
+
+## Midlertidig drift med kun grydesensor (2026-11-07)
+
+Aktiveret med `-DBRYG_POT_ONLY=1` i `platformio.ini`. Automatisk start,
+genoptagelse, mæskning, udmæskning og kogning kræver kun en gyldig, frisk
+grydemåling. Ventilsensorens fejl og ventil-offset afbryder ikke reguleringen.
+Ventilmålinger og fejl vises stadig; dashboardet markerer den midlertidige drift.
+Den fungerende, isolerede probe skal være monteret på grydekanalen (CS GPIO4).
+Grydefejl eller forældede grydemålinger lukker fortsat automatisk gas.
+Manuel betjening er uændret. Denne indstilling fjerner ventiltemperaturens
+beskyttelse og skal fjernes efter udskiftning af proberne: fjern build-flaget,
+byg og upload igen. Ingen ændring af gemt kalibrering eller Wi-Fi.
+Hosttests køres både normalt og med `scripts/test_pt100.py --pot-only`.
+
 # Temperaturmåling under drift: robusthedsgennemgang
 
 Dato: 5. november 2026. Grundlag: den aktuelle arbejdsmappe inklusive de lokale
